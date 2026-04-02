@@ -1,0 +1,56 @@
+{
+  "saldo_iniziale": 1007521.61,
+  "voci_manuali": [],
+  "saldi_banche": {
+    "aggiornato_il": "2026-03-23T09:43:35.817Z",
+    "banche": [
+      {
+        "id": "bpm_20496",
+        "nome": "Banco BPM",
+        "conto": "C/C 20496",
+        "iban": "IT34S0503420504000000020496",
+        "bic": "BAPPIT21810",
+        "valuta": "EUR",
+        "saldo": 52772.51
+      },
+      {
+        "id": "bpm_36062",
+        "nome": "Banco BPM",
+        "conto": "C/C 36062 Fotovoltaico",
+        "iban": "IT34S0503420504000000036062",
+        "bic": "BAPPIT21810",
+        "valuta": "EUR",
+        "saldo": 1699
+      },
+      {
+        "id": "bdm",
+        "nome": "BDM",
+        "conto": "C/C Principale",
+        "iban": "IT58B0542401601000001200206",
+        "bic": "BPBAIT3BXXX",
+        "valuta": "EUR",
+        "saldo": 50875.79
+      },
+      {
+        "id": "wise_eur",
+        "nome": "Wise",
+        "conto": "EUR",
+        "iban": "BE83967250032115",
+        "bic": "TRWIBEB1XXX",
+        "valuta": "EUR",
+        "saldo": 52012.5,
+        "vincoli": 850161.81
+      },
+      {
+        "id": "wise_usd",
+        "nome": "Wise",
+        "conto": "USD",
+        "iban": "ROUTING 026073150",
+        "bic": "ACC 311374358",
+        "valuta": "USD",
+        "saldo": 1419,
+        "vincoli": 1370577.87
+      }
+    ]
+  }
+}

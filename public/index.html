@@ -1,0 +1,2065 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AEC TESORERIA by RITA</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --bg:       #0d1525;
+      --panel:    #141c2e;
+      --panel2:   #1a2540;
+      --panel3:   #223058;
+      --border:   #2a3f6a;
+      --text:     #e2e8f0;
+      --muted:    #7a90b8;
+      --dim:      #3a4f78;
+      --accent:   #3b82f6;
+      --green:    #22c55e;
+      --red:      #ef4444;
+      --orange:   #f59e0b;
+      --cyan:     #06b6d4;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── HEADER ── */
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .logo { height: 38px; }
+    .header-title { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: .04em; }
+    .header-spacer { flex: 1; }
+
+    /* ── SALDO INIZIALE WIDGET ── */
+    .saldo-widget {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 14px;
+    }
+    .saldo-widget label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .saldo-widget input {
+      background: transparent; border: none; outline: none;
+      color: var(--green); font-family: 'DM Mono', monospace;
+      font-size: 15px; font-weight: 500; width: 130px; text-align: right;
+    }
+    .saldo-widget button {
+      background: var(--accent); border: none; color: white;
+      padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;
+    }
+
+    /* ── LAYOUT ── */
+    .main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+    /* ── KPI BAR ── */
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .kpi {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+    .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+    .kpi-val { font-family: 'DM Mono', monospace; font-size: 22px; font-weight: 600; }
+    .kpi-val.green { color: var(--green); }
+    .kpi-val.red   { color: var(--red); }
+    .kpi-val.blue  { color: var(--accent); }
+    .kpi-val.orange{ color: var(--orange); }
+
+    /* ── CARDS ── */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    .card-header {
+      padding: 14px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--panel2);
+    }
+    .card-badge {
+      background: var(--panel3);
+      color: var(--muted);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-left: auto;
+    }
+
+    /* ── CHART ── */
+    .chart-wrap { padding: 20px; height: 280px; position: relative; }
+
+    /* ── TWO COLUMNS ── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── TABLE ── */
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--panel2);
+    }
+    td {
+      padding: 9px 14px;
+      font-size: 12px;
+      border-bottom: 1px solid rgba(42,63,106,.4);
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(59,130,246,.04); }
+    .mono { font-family: 'DM Mono', monospace; }
+    .qty-green { color: var(--green); font-weight: 600; font-family: 'DM Mono', monospace; }
+    .qty-red   { color: var(--red);   font-weight: 600; font-family: 'DM Mono', monospace; }
+    .qty-orange{ color: var(--orange);font-weight: 600; font-family: 'DM Mono', monospace; }
+    .scaduta { color: var(--red); font-size: 10px; }
+
+    /* ── FORM VOCE MANUALE ── */
+    .form-voce {
+      padding: 16px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: flex-end;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel2);
+    }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .form-group input, .form-group select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      outline: none;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+    .btn-add {
+      background: var(--accent);
+      border: none; color: white;
+      padding: 7px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .btn-del {
+      background: transparent;
+      border: none;
+      color: var(--red);
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 6px;
+    }
+    .btn-del:hover { color: #ff6b6b; }
+
+    /* ── BUTTONS HEADER ── */
+    .btn-export {
+      background: #166534; border: 1px solid #16a34a; color: white;
+      padding: 7px 14px; border-radius: 6px; cursor: pointer;
+      font-family: 'DM Sans', sans-serif; font-size: 13px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .btn-print {
+      background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+      padding: 7px 14px; border-radius: 6px; cursor: pointer;
+      font-family: 'DM Sans', sans-serif; font-size: 13px;
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    /* ── LOADING ── */
+    .loading { text-align: center; padding: 40px; color: var(--muted); }
+    .error-box { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); border-radius: 8px; padding: 16px; color: var(--red); margin: 20px; }
+
+    /* ── FILTRI DATA ── */
+    .filtri {
+      padding: 12px 20px;
+      display: flex; gap: 12px; align-items: center;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel2);
+      flex-wrap: wrap;
+    }
+    .filtri label { font-size: 11px; color: var(--muted); }
+    .filtri input {
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); padding: 5px 10px; border-radius: 6px;
+      font-size: 12px; color-scheme: dark;
+    }
+    .filtri select {
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); padding: 5px 10px; border-radius: 6px; font-size: 12px;
+    }
+    .filtri-spacer { flex: 1; }
+
+
+
+    /* ── SALDO EDIT INPUT ── */
+    .saldo-edit-input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--green);
+      font-family: 'DM Mono', monospace;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 6px;
+      width: 150px;
+      text-align: right;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .saldo-edit-input:focus { border-color: var(--accent); }
+    .saldo-edit-input.vincoli { color: var(--orange); }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+    /* ── TABS ── */
+    .tab-nav {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 0;
+      padding: 0 24px;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      color: var(--muted);
+      padding: 14px 20px;
+      cursor: pointer;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: color .2s, border-color .2s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── SALDO BANCHE ── */
+    .banks-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .bank-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .bank-card-header {
+      background: var(--panel2);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .bank-card-iban {
+      font-size: 9px;
+      color: var(--dim);
+      font-family: 'DM Mono', monospace;
+      margin-top: 2px;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .bank-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(42,63,106,.3);
+      font-size: 13px;
+    }
+    .bank-row:last-child { border-bottom: none; }
+    .bank-row-label { color: var(--muted); }
+    .bank-row-val { font-family: 'DM Mono', monospace; font-weight: 600; }
+    .bank-total-card {
+      background: var(--panel2);
+      border: 1px solid var(--accent);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    /* ── RIBA ── */
+    .riba-alert {
+      background: rgba(245,158,11,.08);
+      border: 1px solid rgba(245,158,11,.3);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 16px;
+      font-size: 12px;
+      color: var(--orange);
+    }
+    .riba-group-header {
+      background: var(--panel3);
+      padding: 8px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .riba-group-header .riba-group-tot {
+      margin-left: auto;
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      color: var(--green);
+    }
+    .riba-group-header .riba-group-badge {
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 10px;
+      padding: 1px 7px;
+      border-radius: 8px;
+    }
+    .btn-presenta {
+      background: rgba(34,197,94,.15);
+      border: 1px solid rgba(34,197,94,.3);
+      color: var(--green);
+      font-size: 10px;
+      padding: 3px 9px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: 'DM Sans', sans-serif;
+      white-space: nowrap;
+      transition: background .15s;
+    }
+    .btn-presenta:hover { background: rgba(34,197,94,.25); }
+    .btn-presenta.presentata {
+      background: rgba(59,130,246,.15);
+      border-color: rgba(59,130,246,.3);
+      color: var(--accent);
+    }
+    .badge-presentata {
+      display: inline-block;
+      font-size: 9px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .badge-presentata.si   { background: rgba(34,197,94,.12); color: var(--green); }
+    .badge-presentata.no   { background: rgba(245,158,11,.12); color: var(--orange); }
+    .badge-presentata.neg  { background: rgba(239,68,68,.1);  color: var(--red); }
+    .riba-form-presenta {
+      padding: 12px 16px;
+      background: var(--panel2);
+      border-bottom: 1px solid var(--border);
+      display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+    }
+
+    @media print {
+      header, .form-voce, .filtri, .btn-export, .btn-print, .saldo-widget button { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <img src="/AEClogo.png" class="logo" alt="AEC">
+  <div class="header-title">AEC TESORERIA <span style="color:var(--muted);font-weight:300;font-size:12px">by RITA</span></div>
+  <div class="header-spacer"></div>
+  <div class="saldo-widget">
+    <label>Cambio USD/EUR</label>
+    <input type="number" id="cambio-usd" placeholder="1.15" step="0.001" style="width:70px"
+      value="1.15" oninput="aggiornaCambio()">
+    <span style="font-size:11px;color:var(--muted)">$ = 1€</span>
+  </div>
+  <div class="saldo-widget">
+    <label>Saldo iniziale banche €</label>
+    <input type="number" id="saldo-input" placeholder="0.00" step="0.01">
+    <button onclick="saveSaldo()">✓ Salva</button>
+  </div>
+  <button class="btn-export" onclick="exportExcel()" style="margin-left:10px">📊 EXPORT</button>
+  <button class="btn-print" onclick="window.print()" style="margin-left:6px">🖨️ PRINT</button>
+</header>
+
+
+<nav class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('banche')">🏦 Saldi Banche</button>
+  <button class="tab-btn" onclick="switchTab('operazioni')">⚡ Operazioni in Corso</button>
+  <button class="tab-btn" onclick="switchTab('riba')">📋 RIBA Attive</button>
+  <button class="tab-btn" onclick="switchTab('riba-fornitori')">🏭 RIBA Fornitori</button>
+  <button class="tab-btn" onclick="switchTab('wise')">💳 Pagamenti Fornitori Wise</button>
+  <button class="tab-btn" onclick="switchTab('rid')">🔄 RID Automatici</button>
+  <button class="tab-btn" onclick="switchTab('cashflow')">💰 Cashflow</button>
+</nav>
+
+<div id="tab-cashflow" class="tab-content">
+<div class="main">
+
+  <!-- KPIs -->
+  <div class="kpis" id="kpis">
+    <div class="kpi"><div class="kpi-label">Saldo Iniziale <span style="font-size:9px;color:var(--muted)" id="k-cambio-label"></span></div><div class="kpi-val blue" id="k-saldo">—</div></div>
+    <div class="kpi"><div class="kpi-label">Incassi Attesi</div><div class="kpi-val green" id="k-incassi">—</div></div>
+    <div class="kpi"><div class="kpi-label">Pagamenti Previsti</div><div class="kpi-val red" id="k-pagamenti">—</div></div>
+    <div class="kpi"><div class="kpi-label">Saldo Finale Previsto</div><div class="kpi-val" id="k-finale">—</div></div>
+    <div class="kpi"><div class="kpi-label">Scaduto Non Incassato</div><div class="kpi-val orange" id="k-scaduto">—</div></div>
+    <div class="kpi"><div class="kpi-label">Scaduto Non Pagato</div><div class="kpi-val red" id="k-scaduto-pag">—</div></div>
+  </div>
+
+  <!-- Grafico -->
+  <div class="card">
+    <div class="card-header">📈 Andamento Cashflow nel Tempo</div>
+    <div class="filtri">
+      <label>Periodo:</label>
+      <select id="periodo-chart" onchange="renderAll()">
+        <option value="3">3 mesi</option>
+        <option value="6" selected>6 mesi</option>
+        <option value="12">12 mesi</option>
+        <option value="24">24 mesi</option>
+        <option value="0">Tutto</option>
+      </select>
+    </div>
+    <div class="chart-wrap"><canvas id="cashflow-chart"></canvas></div>
+  </div>
+
+  <!-- Tabelle -->
+  <div class="two-col">
+
+    <!-- Incassi -->
+    <div class="card">
+      <div class="card-header">
+        💚 Incassi da Clienti
+        <span class="card-badge" id="badge-incassi">0</span>
+      </div>
+      <div class="filtri">
+        <label>Da:</label>
+        <input type="date" id="f-inc-da" oninput="renderAll()" style="color-scheme:dark">
+        <label>A:</label>
+        <input type="date" id="f-inc-a" oninput="renderAll()" style="color-scheme:dark">
+        <div class="filtri-spacer"></div>
+        <label style="color:var(--green);font-weight:600" id="tot-incassi">€ 0</label>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Scadenza</th><th>Cliente</th><th style="text-align:right">Importo</th></tr></thead>
+          <tbody id="tbody-incassi"><tr><td colspan="3" class="loading">Caricamento...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Pagamenti -->
+    <div class="card">
+      <div class="card-header">
+        🔴 Pagamenti a Fornitori
+        <span class="card-badge" id="badge-pagamenti">0</span>
+      </div>
+      <div class="filtri">
+        <label>Da:</label>
+        <input type="date" id="f-pag-da" oninput="renderAll()" style="color-scheme:dark">
+        <label>A:</label>
+        <input type="date" id="f-pag-a" oninput="renderAll()" style="color-scheme:dark">
+        <div class="filtri-spacer"></div>
+        <label style="color:var(--red);font-weight:600" id="tot-pagamenti">€ 0</label>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Scadenza</th><th>Fornitore</th><th style="text-align:right">Importo</th></tr></thead>
+          <tbody id="tbody-pagamenti"><tr><td colspan="3" class="loading">Caricamento...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Voci Manuali -->
+  <div class="card">
+    <div class="card-header">
+      ✏️ Voci Manuali
+      <span class="card-badge" id="badge-manuali">0</span>
+    </div>
+    <div class="form-voce">
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="m-tipo">
+          <option value="incasso">Incasso</option>
+          <option value="pagamento">Pagamento</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Descrizione</label>
+        <input type="text" id="m-desc" placeholder="Es. Affitto, Stipendi..." style="width:200px">
+      </div>
+      <div class="form-group">
+        <label>Importo €</label>
+        <input type="number" id="m-importo" placeholder="0.00" step="0.01" style="width:120px">
+      </div>
+      <div class="form-group">
+        <label>Data Scadenza</label>
+        <input type="date" id="m-data" style="color-scheme:dark">
+      </div>
+      <button class="btn-add" onclick="addVoce()">+ Aggiungi</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Data</th><th>Tipo</th><th>Descrizione</th><th style="text-align:right">Importo</th><th></th></tr></thead>
+        <tbody id="tbody-manuali"><tr><td colspan="5" style="text-align:center;padding:20px;color:var(--dim)">Nessuna voce manuale</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const BASE = '';
+const fmt = n => new Intl.NumberFormat('it-IT', {minimumFractionDigits:2, maximumFractionDigits:2}).format(n);
+const today = new Date(); today.setHours(0,0,0,0);
+
+let _data = null;
+let _chart = null;
+
+// ─── LOAD DATA ────────────────────────────────────────────
+async function loadData() {
+  try {
+    const res = await fetch(`${BASE}/api/cashflow`);
+    _data = await res.json();
+    document.getElementById('saldo-input').value = _data.saldo_iniziale || 0;
+    renderAll();
+  } catch(e) {
+    document.getElementById('kpis').innerHTML = `<div class="error-box">⚠ Errore caricamento: ${e.message}</div>`;
+  }
+}
+
+// ─── SAVE SALDO ───────────────────────────────────────────
+async function saveSaldo() {
+  const saldo = parseFloat(document.getElementById('saldo-input').value) || 0;
+  await fetch(`${BASE}/api/saldo`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({saldo}) });
+  if (_data) { _data.saldo_iniziale = saldo; renderAll(); }
+}
+
+function getCambio() {
+  return parseFloat(document.getElementById('cambio-usd')?.value) || 1.15;
+}
+
+function aggiornaCambio() {
+  // Salva cambio e ricalcola saldo se banche già caricate
+  if (_saldiBanche) {
+    const cambio = getCambio();
+    const totEur = _saldiBanche.banche.filter(b=>b.valuta==='EUR').reduce((s,b)=>s+(b.saldo||0)+(b.vincoli||0),0);
+    const totUsd = _saldiBanche.banche.filter(b=>b.valuta==='USD').reduce((s,b)=>s+(b.saldo||0)+(b.vincoli||0),0);
+    const nuovoSaldo = totEur + (totUsd / cambio);
+    document.getElementById('saldo-input').value = nuovoSaldo.toFixed(2);
+    if (_data) { _data.saldo_iniziale = nuovoSaldo; renderAll(); }
+  }
+}
+
+// ─── ADD VOCE MANUALE ─────────────────────────────────────
+async function addVoce() {
+  const tipo = document.getElementById('m-tipo').value;
+  const desc = document.getElementById('m-desc').value.trim();
+  const imp  = parseFloat(document.getElementById('m-importo').value) || 0;
+  const data = document.getElementById('m-data').value;
+  if (!desc || !imp || !data) { alert('Compila tutti i campi'); return; }
+  const res = await fetch(`${BASE}/api/voce`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({tipo, descrizione:desc, importo:imp, data_scad:data}) });
+  const r = await res.json();
+  if (_data) { _data.voci_manuali.push(r.voce); renderAll(); }
+  document.getElementById('m-desc').value = '';
+  document.getElementById('m-importo').value = '';
+}
+
+// ─── DELETE VOCE MANUALE ──────────────────────────────────
+async function deleteVoce(id) {
+  await fetch(`${BASE}/api/voce/${id}`, { method:'DELETE' });
+  if (_data) { _data.voci_manuali = _data.voci_manuali.filter(v => v.id !== id); renderAll(); }
+}
+
+// ─── PARSE DATE ──────────────────────────────────────────
+function parseISO(s) {
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+
+// ─── RENDER ALL ──────────────────────────────────────────
+function renderAll() {
+  if (!_data) return;
+
+  const periodoMesi = parseInt(document.getElementById('periodo-chart').value) || 0;
+
+  // Merge all entries
+  const allIncassi  = [..._data.incassi,  ..._data.voci_manuali.filter(v => v.tipo === 'incasso')];
+  const allPagamenti= [..._data.pagamenti, ..._data.voci_manuali.filter(v => v.tipo === 'pagamento')];
+
+  // KPIs
+  const saldo = _data.saldo_iniziale || 0;
+  const totInc = allIncassi.reduce((s,v) => s + v.importo, 0);
+  const totPag = allPagamenti.reduce((s,v) => s + v.importo, 0);
+  const finale = saldo + totInc - totPag;
+
+  const scadutoInc = allIncassi.filter(v => parseISO(v.data_scad) < today).reduce((s,v) => s+v.importo, 0);
+  const scadutoPag = allPagamenti.filter(v => parseISO(v.data_scad) < today).reduce((s,v) => s+v.importo, 0);
+
+  const cambio = getCambio();
+  const totUsdConv = _saldiBanche ? _saldiBanche.banche.filter(b=>b.valuta==='USD').reduce((s,b)=>s+(b.saldo||0)+(b.vincoli||0),0) / cambio : 0;
+  document.getElementById('k-saldo').textContent = '€ ' + fmt(saldo);
+  const kSaldoEl = document.getElementById('k-saldo');
+  const kCambioLabel = document.getElementById('k-cambio-label');
+  if (totUsdConv > 0 && kCambioLabel) {
+    kCambioLabel.textContent = `(incl. $ a ${cambio})`;
+  }
+  document.getElementById('k-incassi').textContent = '€ ' + fmt(totInc);
+  document.getElementById('k-pagamenti').textContent = '€ ' + fmt(totPag);
+  document.getElementById('k-finale').textContent = '€ ' + fmt(finale);
+  document.getElementById('k-finale').className = 'kpi-val ' + (finale >= 0 ? 'green' : 'red');
+  document.getElementById('k-scaduto').textContent = '€ ' + fmt(scadutoInc);
+  document.getElementById('k-scaduto-pag').textContent = '€ ' + fmt(scadutoPag);
+
+  // Filter tables by date
+  const fIncDa = document.getElementById('f-inc-da').value;
+  const fIncA  = document.getElementById('f-inc-a').value;
+  const fPagDa = document.getElementById('f-pag-da').value;
+  const fPagA  = document.getElementById('f-pag-a').value;
+
+  const filteredInc = allIncassi.filter(v => {
+    const d = v.data_scad;
+    return (!fIncDa || d >= fIncDa) && (!fIncA || d <= fIncA);
+  });
+  const filteredPag = allPagamenti.filter(v => {
+    const d = v.data_scad;
+    return (!fPagDa || d >= fPagDa) && (!fPagA || d <= fPagA);
+  });
+
+  // Render incassi table
+  document.getElementById('badge-incassi').textContent = filteredInc.length;
+  document.getElementById('tot-incassi').textContent = '€ ' + fmt(filteredInc.reduce((s,v)=>s+v.importo,0));
+  document.getElementById('tbody-incassi').innerHTML = filteredInc.length
+    ? filteredInc.map(v => {
+        const d = parseISO(v.data_scad);
+        const scaduta = d && d < today;
+        return `<tr>
+          <td class="mono" style="font-size:12px">${v.data_fmt || v.data_scad || '—'}${scaduta ? ' <span class="scaduta">⚠ scaduta</span>' : ''}</td>
+          <td style="font-size:12px;color:var(--muted)">${v.nome || v.descrizione || '—'}</td>
+          <td class="qty-green" style="text-align:right">+ € ${fmt(v.importo)}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--dim)">Nessun incasso</td></tr>';
+
+  // Render pagamenti table
+  document.getElementById('badge-pagamenti').textContent = filteredPag.length;
+  document.getElementById('tot-pagamenti').textContent = '€ ' + fmt(filteredPag.reduce((s,v)=>s+v.importo,0));
+  document.getElementById('tbody-pagamenti').innerHTML = filteredPag.length
+    ? filteredPag.map(v => {
+        const d = parseISO(v.data_scad);
+        const scaduta = d && d < today;
+        return `<tr>
+          <td class="mono" style="font-size:12px">${v.data_fmt || v.data_scad || '—'}${scaduta ? ' <span class="scaduta">⚠ scaduta</span>' : ''}</td>
+          <td style="font-size:12px;color:var(--muted)">${v.nome || v.descrizione || '—'}</td>
+          <td class="qty-red" style="text-align:right">- € ${fmt(v.importo)}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--dim)">Nessun pagamento</td></tr>';
+
+  // Render voci manuali
+  document.getElementById('badge-manuali').textContent = _data.voci_manuali.length;
+  document.getElementById('tbody-manuali').innerHTML = _data.voci_manuali.length
+    ? _data.voci_manuali.map(v => `<tr>
+        <td class="mono" style="font-size:12px">${v.data_fmt || v.data_scad || '—'}</td>
+        <td><span style="font-size:10px;padding:2px 7px;border-radius:4px;background:${v.tipo==='incasso'?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)'};color:${v.tipo==='incasso'?'var(--green)':'var(--red)'}">${v.tipo==='incasso'?'▲ Incasso':'▼ Pagamento'}</span></td>
+        <td style="font-size:12px">${v.descrizione}</td>
+        <td class="${v.tipo==='incasso'?'qty-green':'qty-red'}" style="text-align:right">${v.tipo==='incasso'?'+':'-'} € ${fmt(v.importo)}</td>
+        <td><button class="btn-del" onclick="deleteVoce(${v.id})">✕</button></td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--dim)">Nessuna voce manuale</td></tr>';
+
+  // Render chart
+  renderChart(allIncassi, allPagamenti, saldo, periodoMesi);
+}
+
+// ─── CHART ───────────────────────────────────────────────
+function renderChart(incassi, pagamenti, saldoIniziale, periodoMesi) {
+  // Build weekly buckets
+  const now = new Date(); now.setHours(0,0,0,0);
+  const cutoff = periodoMesi > 0
+    ? new Date(now.getFullYear(), now.getMonth() + periodoMesi, now.getDate())
+    : new Date(8640000000000000);
+
+  // All events sorted by date
+  let events = [];
+  incassi.forEach(v => { const d = parseISO(v.data_scad); if(d && d <= cutoff) events.push({d, delta: +v.importo}); });
+  pagamenti.forEach(v => { const d = parseISO(v.data_scad); if(d && d <= cutoff) events.push({d, delta: -v.importo}); });
+  events.sort((a,b) => a.d - b.d);
+
+  if (!events.length) {
+    if (_chart) { _chart.destroy(); _chart = null; }
+    return;
+  }
+
+  // Build timeline points (one per unique date)
+  const dateMap = {};
+  events.forEach(e => {
+    const key = e.d.toISOString().slice(0,10);
+    dateMap[key] = (dateMap[key] || 0) + e.delta;
+  });
+
+  const dates = Object.keys(dateMap).sort();
+  let running = saldoIniziale;
+  const labels = [];
+  const values = [];
+  const colors = [];
+
+  // Add starting point
+  labels.push('Oggi');
+  values.push(running);
+  colors.push(running >= 0 ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)');
+
+  dates.forEach(d => {
+    running += dateMap[d];
+    const dt = new Date(d);
+    labels.push(`${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}`);
+    values.push(Math.round(running * 100) / 100);
+    colors.push(running >= 0 ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)');
+  });
+
+  if (_chart) _chart.destroy();
+
+  const ctx = document.getElementById('cashflow-chart').getContext('2d');
+  _chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Saldo €',
+        data: values,
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.08)',
+        borderWidth: 2,
+        pointBackgroundColor: colors,
+        pointRadius: values.length > 60 ? 2 : 4,
+        pointHoverRadius: 6,
+        fill: true,
+        tension: 0.3
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => '€ ' + fmt(ctx.raw)
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#7a90b8', font: { size: 10 }, maxTicksLimit: 12 },
+          grid: { color: 'rgba(42,63,106,0.4)' }
+        },
+        y: {
+          ticks: { color: '#7a90b8', font: { size: 10 }, callback: v => '€ ' + fmt(v) },
+          grid: { color: 'rgba(42,63,106,0.4)' }
+        }
+      }
+    }
+  });
+}
+
+// ─── EXPORT EXCEL ────────────────────────────────────────
+function exportExcel() {
+  if (!_data) return;
+  const wb = XLSX.utils.book_new();
+
+  const allInc = [..._data.incassi, ..._data.voci_manuali.filter(v=>v.tipo==='incasso')];
+  const allPag = [..._data.pagamenti, ..._data.voci_manuali.filter(v=>v.tipo==='pagamento')];
+
+  const riepilogo = [
+    ['Saldo Iniziale Banche', _data.saldo_iniziale],
+    ['Totale Incassi Attesi', allInc.reduce((s,v)=>s+v.importo,0)],
+    ['Totale Pagamenti Previsti', allPag.reduce((s,v)=>s+v.importo,0)],
+    ['Saldo Finale Previsto', _data.saldo_iniziale + allInc.reduce((s,v)=>s+v.importo,0) - allPag.reduce((s,v)=>s+v.importo,0)]
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(riepilogo), 'Riepilogo');
+
+  if (allInc.length) {
+    const rows = [['Scadenza','Cliente/Descrizione','Importo €']];
+    allInc.forEach(v => rows.push([v.data_fmt||v.data_scad, v.nome||v.descrizione, v.importo]));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Incassi');
+  }
+  if (allPag.length) {
+    const rows = [['Scadenza','Fornitore/Descrizione','Importo €']];
+    allPag.forEach(v => rows.push([v.data_fmt||v.data_scad, v.nome||v.descrizione, v.importo]));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Pagamenti');
+  }
+
+  XLSX.writeFile(wb, `AEC_Cashflow_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+
+
+// ─── SALDO BANCHE ────────────────────────────────────────
+let _saldiBanche = null;
+
+async function loadSaldiBanche() {
+  try {
+    const res = await fetch('/api/saldi-banche');
+    _saldiBanche = await res.json();
+    renderSaldiBanche();
+  } catch(e) {
+    document.getElementById('banks-grid').innerHTML = '<div class="error-box">⚠ Errore: ' + e.message + '</div>';
+  }
+}
+
+const BANK_ICONS = { 'Banco BPM': '🏦', 'BDM': '🏦', 'Wise': '💳' };
+const VALUTA_ICON = { 'EUR': '€', 'USD': '$' };
+
+function renderSaldiBanche() {
+  if (!_saldiBanche) return;
+  const banche = _saldiBanche.banche;
+  const fmt = (n, v) => (VALUTA_ICON[v]||'') + ' ' + new Intl.NumberFormat('it-IT', {minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
+
+  // Group by bank name
+  const gruppi = {};
+  banche.forEach(b => {
+    if (!gruppi[b.nome]) gruppi[b.nome] = [];
+    gruppi[b.nome].push(b);
+  });
+
+  let cardsHtml = '';
+  for (const [nomeBanca, conti] of Object.entries(gruppi)) {
+    const icon = BANK_ICONS[nomeBanca] || '🏦';
+    const allEur = conti.filter(c => c.valuta === 'EUR');
+    const allUsd = conti.filter(c => c.valuta === 'USD');
+    const totEur = allEur.reduce((s,c) => s + (c.saldo||0) + (c.vincoli||0), 0);
+    const totUsd = allUsd.reduce((s,c) => s + (c.saldo||0) + (c.vincoli||0), 0);
+
+    let rowsHtml = '';
+    conti.forEach(b => {
+      const hasVincoli = b.vincoli !== undefined;
+      rowsHtml += `
+        <div class="bank-row">
+          <span class="bank-row-label">${b.conto}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:10px;color:var(--dim)">${VALUTA_ICON[b.valuta]}</span>
+            <input class="saldo-edit-input" type="number" step="0.01"
+              id="saldo_${b.id}" value="${b.saldo||0}"
+              onchange="markDirty()" oninput="markDirty()">
+          </div>
+        </div>`;
+      if (hasVincoli) {
+        rowsHtml += `
+        <div class="bank-row">
+          <span class="bank-row-label" style="color:var(--orange)">Vincoli ${b.valuta}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:10px;color:var(--dim)">${VALUTA_ICON[b.valuta]}</span>
+            <input class="saldo-edit-input vincoli" type="number" step="0.01"
+              id="vincoli_${b.id}" value="${b.vincoli||0}"
+              onchange="markDirty()" oninput="markDirty()">
+          </div>
+        </div>`;
+      }
+    });
+
+    // Totale card
+    const totaleHtml = '';
+
+    const ibanList = conti.map(c => c.iban).join(' · ');
+    cardsHtml += `
+      <div class="bank-card">
+        <div class="bank-card-header">
+          ${icon} ${nomeBanca}
+          <div class="bank-card-iban">${ibanList}</div>
+        </div>
+        ${rowsHtml}
+        ${totaleHtml}
+      </div>`;
+  }
+  document.getElementById('banks-grid').innerHTML = cardsHtml;
+
+  // Update totals
+  updateBancheTotals();
+
+  // Update aggiornato
+  if (_saldiBanche.aggiornato_il) {
+    const d = new Date(_saldiBanche.aggiornato_il);
+    document.getElementById('banche-aggiornato').textContent =
+      'Aggiornato: ' + d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT', {hour:'2-digit',minute:'2-digit'});
+  } else {
+    document.getElementById('banche-aggiornato').textContent = 'Mai aggiornato';
+  }
+
+  // Riepilogo tabella
+  renderBancheRiepilogo();
+}
+
+function updateBancheTotals() {
+  if (!_saldiBanche) return;
+  const fmt = (n, v) => (VALUTA_ICON[v]||'') + ' ' + new Intl.NumberFormat('it-IT', {minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
+  let totEur = 0, totUsd = 0;
+  _saldiBanche.banche.forEach(b => {
+    const saldo = parseFloat(document.getElementById('saldo_' + b.id)?.value) || 0;
+    const vincoli = parseFloat(document.getElementById('vincoli_' + b.id)?.value) || 0;
+    if (b.valuta === 'EUR') totEur += saldo + vincoli;
+    if (b.valuta === 'USD') totUsd += saldo + vincoli;
+  });
+  document.getElementById('banche-totale-eur').textContent = fmt(totEur, 'EUR');
+  document.getElementById('banche-totale-usd').textContent = fmt(totUsd, 'USD');
+}
+
+function renderBancheRiepilogo() {
+  if (!_saldiBanche) return;
+  const fmt = (n) => new Intl.NumberFormat('it-IT', {minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
+  let rows = '';
+  let totEur = 0, totUsd = 0;
+  _saldiBanche.banche.forEach(b => {
+    const saldo = b.saldo || 0;
+    const vincoli = b.vincoli !== undefined ? (b.vincoli || 0) : null;
+    const liquidita = saldo + (vincoli !== null ? vincoli : 0);
+    if (b.valuta === 'EUR') totEur += liquidita;
+    if (b.valuta === 'USD') totUsd += liquidita;
+    const sym = VALUTA_ICON[b.valuta] || '';
+    rows += `<tr>
+      <td>${b.nome} — ${b.conto}</td>
+      <td style="color:var(--muted)">${b.valuta}</td>
+      <td class="mono" style="text-align:right">${sym} ${fmt(saldo)}</td>
+      <td class="mono" style="text-align:right;color:var(--orange)">${vincoli !== null ? sym + ' ' + fmt(vincoli) : '—'}</td>
+      <td class="qty-green" style="text-align:right">${sym} ${fmt(liquidita)}</td>
+    </tr>`;
+  });
+  rows += `<tr style="border-top:2px solid var(--border);font-weight:700">
+    <td colspan="2">TOTALE EUR</td>
+    <td colspan="2"></td>
+    <td class="qty-green" style="text-align:right">€ ${fmt(totEur)}</td>
+  </tr>`;
+  if (totUsd > 0) rows += `<tr style="font-weight:700">
+    <td colspan="2">TOTALE USD</td>
+    <td colspan="2"></td>
+    <td class="qty-green" style="text-align:right">$ ${fmt(totUsd)}</td>
+  </tr>`;
+  document.getElementById('banche-riepilogo-tbody').innerHTML = rows;
+}
+
+function markDirty() {
+  updateBancheTotals();
+  const btn = document.getElementById('btn-save-banche');
+  btn.disabled = false;
+  btn.style.opacity = '1';
+  btn.style.cursor = 'pointer';
+  btn.textContent = '💾 Salva Saldi';
+}
+
+async function saveSaldiBanche() {
+  if (!_saldiBanche) return;
+  const banche = _saldiBanche.banche.map(b => ({
+    id: b.id,
+    saldo: parseFloat(document.getElementById('saldo_' + b.id)?.value) || 0,
+    vincoli: b.vincoli !== undefined ? (parseFloat(document.getElementById('vincoli_' + b.id)?.value) || 0) : undefined
+  }));
+
+  try {
+    const res = await fetch('/api/saldi-banche', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ banche })
+    });
+    const r = await res.json();
+    if (r.ok) {
+      // Update local data
+      banche.forEach(b => {
+        const existing = _saldiBanche.banche.find(x => x.id === b.id);
+        if (existing) { existing.saldo = b.saldo; if (b.vincoli !== undefined) existing.vincoli = b.vincoli; }
+      });
+      _saldiBanche.aggiornato_il = r.aggiornato_il;
+      const d = new Date(r.aggiornato_il);
+      document.getElementById('banche-aggiornato').textContent =
+        'Aggiornato: ' + d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT', {hour:'2-digit',minute:'2-digit'});
+      const btn = document.getElementById('btn-save-banche');
+      btn.textContent = '✓ Salvato';
+      btn.style.background = 'var(--green)';
+      setTimeout(() => {
+        btn.textContent = '✓ Salva Saldi';
+        btn.style.background = '';
+        btn.disabled = true;
+        btn.style.opacity = '.5';
+        btn.style.cursor = 'default';
+      }, 2000);
+      renderBancheRiepilogo();
+      if (_opLoaded) renderOperazioni();
+
+      // Aggiorna automaticamente il saldo iniziale con il totale EUR delle banche
+      const cambio = parseFloat(document.getElementById('cambio-usd')?.value) || 1.15;
+      const totEurBanche = _saldiBanche.banche
+        .filter(b => b.valuta === 'EUR')
+        .reduce((s, b) => s + (b.saldo || 0) + (b.vincoli || 0), 0);
+      const totUsdBanche = _saldiBanche.banche
+        .filter(b => b.valuta === 'USD')
+        .reduce((s, b) => s + (b.saldo || 0) + (b.vincoli || 0), 0);
+      const nuovoSaldo = totEurBanche + (totUsdBanche / cambio);
+      await fetch('/api/saldo', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ saldo: nuovoSaldo }) });
+      document.getElementById('saldo-input').value = nuovoSaldo.toFixed(2);
+      if (_data) { _data.saldo_iniziale = nuovoSaldo; renderAll(); }
+    }
+  } catch(e) {
+    alert('Errore salvataggio: ' + e.message);
+  }
+}
+
+// ─── TAB NAVIGATION ──────────────────────────────────────
+let _bancheLoaded = false;
+let _ribaLoaded = false;
+let _ribaFornLoaded = false;
+let _wiseLoaded = false;
+function switchTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'banche' && !_bancheLoaded) { _bancheLoaded = true; loadSaldiBanche();
+_opLoaded = true; loadOperazioni(); }
+  if (name === 'riba'   && !_ribaLoaded)         { _ribaLoaded = true;     loadRiba(); }
+  if (name === 'riba-fornitori' && !_ribaFornLoaded) { _ribaFornLoaded = true; loadRibaFornitori(); }
+  if (name === 'wise' && !_wiseLoaded)             { _wiseLoaded = true;   loadWise(); }
+  if (name === 'operazioni') { if (!_opLoaded) { _opLoaded = true; loadOperazioni(); } else { renderOperazioni(); } }
+}
+
+// ─── RIBA ────────────────────────────────────────────────
+let _ribaData = null;
+let _ribaSelected = new Set();
+
+async function loadRiba() {
+  try {
+    const res = await fetch('/api/riba');
+    _ribaData = await res.json();
+    renderRiba();
+  } catch(e) {
+    document.getElementById('riba-body').innerHTML = `<div class="error-box">⚠ Errore: ${e.message}</div>`;
+  }
+}
+
+function renderRiba() {
+  if (!_ribaData) return;
+  const { riba, gruppi, totAttese, totPresentate, totNegative } = _ribaData;
+  const today2 = new Date(); today2.setHours(0,0,0,0);
+
+  // KPI
+  document.getElementById('rk-attese').textContent     = '€ ' + fmt(totAttese);
+  document.getElementById('rk-presentate').textContent = '€ ' + fmt(totPresentate);
+  document.getElementById('rk-negative').textContent   = '€ ' + fmt(totNegative);
+  document.getElementById('rk-totale').textContent     = '€ ' + fmt(totAttese + totPresentate);
+  document.getElementById('riba-badge').textContent    = riba.filter(r=>r.segno>0).length;
+
+  // Default data presentazione = oggi
+  if (!document.getElementById('riba-data-pres').value) {
+    document.getElementById('riba-data-pres').value = new Date().toISOString().slice(0,10);
+  }
+
+  if (!gruppi.length) {
+    document.getElementById('riba-body').innerHTML = '<div style="padding:30px;text-align:center;color:var(--dim)">Nessuna RiBa aperta in Easyfatt</div>';
+    return;
+  }
+
+  let html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">';
+  html += `<thead><tr>
+    <th style="width:32px"><input type="checkbox" id="riba-chk-all" onchange="toggleAllRiba(this.checked)" title="Seleziona tutte"></th>
+    <th>Cliente</th>
+    <th>Rata</th>
+    <th>Note / Insoluto</th>
+    <th style="text-align:right">Importo</th>
+    <th>Stato</th>
+    <th>Banca</th>
+    <th>Data Pres.</th>
+  </tr></thead><tbody>`;
+
+  gruppi.forEach(g => {
+    const scad = g.data_scad ? new Date(g.data_scad) : null;
+    const scaduta = scad && scad < today2;
+    const scadLabel = scaduta ? ' <span class="scaduta">⚠ scaduta</span>' : '';
+    const allPres = g.items.filter(r=>r.segno>0).every(r=>r.presentata);
+    const groupColor = allPres ? 'rgba(59,130,246,.06)' : scaduta ? 'rgba(239,68,68,.04)' : 'rgba(34,197,94,.03)';
+
+    html += `<tr style="background:${groupColor}">
+      <td colspan="5" class="riba-group-header" style="cursor:pointer" onclick="toggleGroupRiba('${g.data_scad}')">
+        📅 Scadenza ${g.data_fmt || g.data_scad}${scadLabel}
+        <span class="riba-group-badge">${g.items.length} RiBa</span>
+        <span class="riba-group-tot">+ € ${fmt(g.totale)}</span>
+      </td>
+      <td colspan="3" class="riba-group-header">
+        ${allPres
+          ? '<span class="badge-presentata si">✓ Tutte presentate</span>'
+          : g.presentate > 0
+            ? `<span class="badge-presentata no">${g.presentate}/${g.items.filter(r=>r.segno>0).length} presentate</span>`
+            : '<span class="badge-presentata no">Da presentare</span>'
+        }
+      </td>
+    </tr>`;
+
+    g.items.forEach(r => {
+      const isNeg = r.segno < 0;
+      const chkId = `riba-chk-${r.id}`;
+      const rowBg = isNeg ? 'rgba(239,68,68,.03)' : '';
+      html += `<tr style="background:${rowBg}" data-riba-scad="${r.data_scad}">
+        <td style="text-align:center;padding:8px 6px">
+          ${!isNeg ? `<input type="checkbox" id="${chkId}" data-riba-id="${r.id}" ${_ribaSelected.has(r.id)?'checked':''} onchange="toggleRibaChk(${r.id}, this.checked)">` : ''}
+        </td>
+        <td style="font-size:12px">${r.nome || '—'}</td>
+        <td style="font-size:11px;color:var(--muted)">${r.rata || '—'}</td>
+        <td style="font-size:11px;color:${r.rif.toLowerCase().includes('insoluto')?'var(--red)':'var(--muted)'}">${r.rif || ''}</td>
+        <td class="${isNeg?'qty-red':'qty-green'}" style="text-align:right;font-family:'DM Mono',monospace;font-size:12px">
+          ${isNeg?'- ':'+ '}€ ${fmt(r.importo)}
+          ${isNeg ? '<span class="badge-presentata neg" style="margin-left:4px">PASSIVO</span>' : ''}
+        </td>
+        <td>
+          ${!isNeg ? `<span class="badge-presentata ${r.presentata?'si':'no'}">${r.presentata?'✓ Presentata':'⏳ Da presentare'}</span>` : ''}
+        </td>
+        <td style="font-size:11px;color:var(--muted)">${r.banca || '—'}</td>
+        <td style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace">${r.data_presentazione ? r.data_presentazione.split('-').reverse().join('/') : '—'}</td>
+      </tr>`;
+    });
+  });
+
+  html += '</tbody></table></div>';
+  document.getElementById('riba-body').innerHTML = html;
+  updateRibaSelCount();
+}
+
+function toggleRibaChk(id, checked) {
+  if (checked) _ribaSelected.add(id);
+  else _ribaSelected.delete(id);
+  updateRibaSelCount();
+}
+
+function toggleAllRiba(checked) {
+  if (!_ribaData) return;
+  _ribaData.riba.filter(r=>r.segno>0).forEach(r => {
+    if (checked) _ribaSelected.add(r.id);
+    else _ribaSelected.delete(r.id);
+  });
+  renderRiba();
+}
+
+function toggleGroupRiba(dataScad) {
+  if (!_ribaData) return;
+  const group = _ribaData.riba.filter(r => r.data_scad === dataScad && r.segno > 0);
+  const allChecked = group.every(r => _ribaSelected.has(r.id));
+  group.forEach(r => {
+    if (allChecked) _ribaSelected.delete(r.id);
+    else _ribaSelected.add(r.id);
+  });
+  renderRiba();
+}
+
+function updateRibaSelCount() {
+  document.getElementById('riba-sel-count').textContent = `${_ribaSelected.size} selezionate`;
+}
+
+async function presentaSelezionate(presenta) {
+  if (_ribaSelected.size === 0) { alert('Seleziona almeno una RiBa'); return; }
+  const ids = Array.from(_ribaSelected);
+  const banca = document.getElementById('riba-banca').value;
+  const data_pres = document.getElementById('riba-data-pres').value;
+  if (presenta && !data_pres) { alert('Inserisci la data di presentazione'); return; }
+
+  try {
+    await fetch('/api/riba/presenta', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ids, presentata: presenta, data_presentazione: data_pres, banca })
+    });
+    _ribaSelected.clear();
+    _ribaLoaded = false;
+    await loadRiba();
+  } catch(e) { alert('Errore: ' + e.message); }
+}
+
+
+
+// ─── GENERA FILE CBI ─────────────────────────────────────
+async function generaCBI() {
+  if (_ribaSelected.size === 0) { alert('Seleziona almeno una RiBa'); return; }
+
+  const ids = Array.from(_ribaSelected);
+  const banca = document.getElementById('riba-banca').value;
+  const dataPres = document.getElementById('riba-data-pres').value;
+
+  if (!dataPres) { alert('Inserisci la data di presentazione'); return; }
+
+  try {
+    const res = await fetch('/api/riba/genera-cbi', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ids, data_presentazione: dataPres, banca_id: banca })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      alert('Errore: ' + err.error);
+      return;
+    }
+
+    // Scarica il file
+    const blob = await res.blob();
+    const oggi = new Date();
+    const fname = `Riba_${String(oggi.getDate()).padStart(2,'0')}-${String(oggi.getMonth()+1).padStart(2,'0')}-${oggi.getFullYear()}.txt`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    // Chiedi se segnare anche come presentate
+    if (confirm(`File CBI generato (${ids.length} RiBa).\nVuoi segnare le RiBa come presentate?`)) {
+      await presentaSelezionate(true);
+    }
+
+  } catch(e) {
+    alert('Errore generazione CBI: ' + e.message);
+  }
+}
+
+
+// ─── RIBA FORNITORI ──────────────────────────────────────
+let _ribaFornData = null;
+
+async function loadRibaFornitori() {
+  try {
+    const res = await fetch('/api/riba-fornitori');
+    _ribaFornData = await res.json();
+    renderRibaFornitori();
+  } catch(e) {
+    document.getElementById('rf-body-scad').innerHTML = `<div class="error-box">⚠ Errore: ${e.message}</div>`;
+  }
+}
+
+function renderRibaFornitori() {
+  if (!_ribaFornData) return;
+  const { riba, gruppi, fornitori, totale, scadute } = _ribaFornData;
+  const today2 = new Date(); today2.setHours(0,0,0,0);
+
+  // KPI
+  document.getElementById('rf-totale').textContent   = '€ ' + fmt(totale);
+  document.getElementById('rf-scadute').textContent  = '€ ' + fmt(scadute);
+  document.getElementById('rf-count').textContent    = riba.length;
+  document.getElementById('rf-fornitori').textContent = fornitori.length;
+  document.getElementById('rf-badge-scad').textContent = gruppi.length;
+  document.getElementById('rf-badge-forn').textContent = fornitori.length;
+  document.getElementById('rf-badge-det').textContent  = riba.length;
+
+  // ── Per scadenza ──
+  if (!gruppi.length) {
+    document.getElementById('rf-body-scad').innerHTML = '<div style="padding:30px;text-align:center;color:var(--dim)">Nessuna RiBa passiva aperta</div>';
+  } else {
+    let html = '<table style="width:100%;border-collapse:collapse"><thead><tr><th>Scadenza</th><th style="text-align:right">Importo</th><th style="text-align:right">N°</th></tr></thead><tbody>';
+    gruppi.forEach(g => {
+      const scad = g.data_scad ? new Date(g.data_scad) : null;
+      const isScaduta = scad && scad < today2;
+      html += `<tr>
+        <td class="mono" style="font-size:12px">
+          ${g.data_fmt || g.data_scad}
+          ${isScaduta ? '<span class="scaduta"> ⚠ scaduta</span>' : ''}
+        </td>
+        <td class="qty-red" style="text-align:right">- € ${fmt(g.totale)}</td>
+        <td style="text-align:right;color:var(--muted);font-size:11px">${g.items.length}</td>
+      </tr>`;
+    });
+    // Totale
+    html += `<tr style="border-top:2px solid var(--border);font-weight:700">
+      <td>TOTALE</td>
+      <td class="qty-red" style="text-align:right">- € ${fmt(totale)}</td>
+      <td></td>
+    </tr>`;
+    html += '</tbody></table>';
+    document.getElementById('rf-body-scad').innerHTML = html;
+  }
+
+  // ── Per fornitore ──
+  if (!fornitori.length) {
+    document.getElementById('rf-body-forn').innerHTML = '<div style="padding:30px;text-align:center;color:var(--dim)">Nessun fornitore</div>';
+  } else {
+    let html = '<table style="width:100%;border-collapse:collapse"><thead><tr><th>Fornitore</th><th style="text-align:right">Totale</th><th style="text-align:right">N°</th></tr></thead><tbody>';
+    fornitori.forEach(f => {
+      const pct = totale > 0 ? (f.totale / totale * 100).toFixed(0) : 0;
+      html += `<tr>
+        <td style="font-size:12px">
+          ${f.nome}
+          <div style="margin-top:3px;height:3px;background:var(--panel3);border-radius:2px;width:100%">
+            <div style="height:3px;background:var(--red);border-radius:2px;width:${pct}%"></div>
+          </div>
+        </td>
+        <td class="qty-red" style="text-align:right">- € ${fmt(f.totale)}</td>
+        <td style="text-align:right;color:var(--muted);font-size:11px">${f.items.length}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('rf-body-forn').innerHTML = html;
+  }
+
+  // ── Dettaglio completo ──
+  if (!riba.length) {
+    document.getElementById('rf-body-det').innerHTML = '<div style="padding:30px;text-align:center;color:var(--dim)">Nessuna RiBa passiva</div>';
+  } else {
+    let html = '<table style="width:100%;border-collapse:collapse"><thead><tr><th>Scadenza</th><th>Fornitore</th><th>Rata</th><th>Note</th><th style="text-align:right">Importo</th></tr></thead><tbody>';
+    riba.forEach(r => {
+      const scad = r.data_scad ? new Date(r.data_scad) : null;
+      const isScaduta = scad && scad < today2;
+      const hasNote = r.rif && r.rif.length > 0;
+      html += `<tr>
+        <td class="mono" style="font-size:12px">${r.data_fmt || '—'}${isScaduta ? '<span class="scaduta"> ⚠</span>' : ''}</td>
+        <td style="font-size:12px">${r.nome || '—'}</td>
+        <td style="font-size:11px;color:var(--muted)">${r.rata || '—'}</td>
+        <td style="font-size:11px;color:${hasNote && r.rif.toLowerCase().includes('contes') ? 'var(--orange)' : 'var(--muted)'}">${r.rif || ''}</td>
+        <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:12px">- € ${fmt(r.importo)}</td>
+      </tr>`;
+    });
+    html += `<tr style="border-top:2px solid var(--border);font-weight:700">
+      <td colspan="4">TOTALE</td>
+      <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace">- € ${fmt(totale)}</td>
+    </tr>`;
+    html += '</tbody></table>';
+    document.getElementById('rf-body-det').innerHTML = html;
+  }
+}
+
+
+// ─── WISE EXPORT ─────────────────────────────────────────
+let _wiseData = null;
+let _wiseIbanOverride = {}; // IBAN inseriti manualmente per IDAnagr
+
+async function loadWise() {
+  try {
+    const res = await fetch('/api/wise-export');
+    _wiseData = await res.json();
+    renderWise();
+  } catch(e) {
+    document.getElementById('we-body').innerHTML = `<div class="error-box">⚠ Errore: ${e.message}</div>`;
+  }
+}
+
+async function ricaricaWise() {
+  document.getElementById('we-body').innerHTML = '<div class="loading">Aggiornamento...</div>';
+  _wiseData = null;
+  await loadWise();
+}
+
+function renderWise() {
+  if (!_wiseData) return;
+  const { righe, totale, senzaIban } = _wiseData;
+  const today2 = new Date(); today2.setHours(0,0,0,0);
+
+  const fDa       = document.getElementById('we-da').value;
+  const fA        = document.getElementById('we-a').value;
+  const soloIban  = document.getElementById('we-solo-iban').checked;
+  const soloItalia = document.getElementById('we-solo-italia').checked;
+
+  // Filtra
+  let filtered = righe.filter(r => {
+    if (fDa && r.data_scad < fDa) return false;
+    if (fA  && r.data_scad > fA)  return false;
+    const ibanEff = _wiseIbanOverride[r.id_anagr] || r.iban;
+    if (soloIban && !ibanEff) return false;
+    if (soloItalia && r.nazione && r.nazione !== '' && r.nazione.toLowerCase() !== 'italia') return false;
+    return true;
+  });
+
+  // KPI
+  document.getElementById('we-totale').textContent     = '€ ' + fmt(totale);
+  document.getElementById('we-con-iban').textContent   = righe.filter(r => r.iban_ok).length + ' / ' + righe.length;
+  document.getElementById('we-senza-iban').textContent = senzaIban;
+  aggiornaSelTotale();
+
+  if (!filtered.length) {
+    document.getElementById('we-body').innerHTML = '<div style="padding:30px;text-align:center;color:var(--dim)">Nessun pagamento trovato</div>';
+    return;
+  }
+
+  let html = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr>
+      <th style="width:32px"><input type="checkbox" id="we-chk-all" onchange="selectAllWise(this.checked)"></th>
+      <th>Fornitore</th>
+      <th>Nazione</th>
+      <th>Scadenza</th>
+      <th>Rate</th>
+      <th>IBAN</th>
+      <th>Email</th>
+      <th style="text-align:right">Importo</th>
+    </tr></thead><tbody>`;
+
+  filtered.forEach(r => {
+    const ibanEff = _wiseIbanOverride[r.id_anagr] || r.iban;
+    const ibanOk  = !!ibanEff;
+    const scad    = r.data_scad ? new Date(r.data_scad) : null;
+    const isScad  = scad && scad < today2;
+    const chkId   = `we-chk-${r.id_anagr}_${r.data_scad}`;
+    const rowKey  = r.id_anagr + '_' + r.data_scad;
+
+    html += `<tr data-key="${rowKey}" style="${!ibanOk ? 'background:rgba(245,158,11,.04)' : ''}">
+      <td style="text-align:center;padding:8px 6px">
+        <input type="checkbox" class="we-chk-row" data-key="${rowKey}" data-importo="${r.importo}"
+          onchange="aggiornaSelTotale()">
+      </td>
+      <td style="font-size:12px;font-weight:500">${r.nome || '—'}</td>
+      <td style="font-size:11px;color:${r.nazione && r.nazione.toLowerCase()!=='italia' && r.nazione!=='' ? 'var(--cyan)' : 'var(--dim)'}">
+        ${r.nazione || '🇮🇹'}
+      </td>
+      <td class="mono" style="font-size:12px">${r.data_fmt || '—'}${isScad ? ' <span class="scaduta">⚠</span>' : ''}</td>
+      <td style="font-size:11px;color:var(--muted)">${r.rate && r.rate.length ? r.rate.join(', ') : '—'}</td>
+      <td style="font-size:11px">
+        ${ibanOk
+          ? `<span style="color:${r.iban_manuale ? 'var(--cyan)' : 'var(--green)'};font-family:'DM Mono',monospace">
+               ${ibanEff}
+               ${r.iban_manuale ? '<span style="font-size:9px;color:var(--cyan);margin-left:4px">✎ manuale</span>' : ''}
+             </span>`
+          : `<div style="display:flex;gap:6px;align-items:center">
+               <input type="text" placeholder="Inserisci IBAN manualmente"
+                 id="iban-input-${r.id_anagr}"
+                 style="background:var(--bg);border:1px solid var(--orange);color:var(--text);padding:4px 8px;border-radius:5px;font-size:11px;font-family:'DM Mono',monospace;width:220px"
+                 oninput="salvaIbanManuale(${r.id_anagr}, this.value)">
+               <span style="font-size:10px;color:var(--orange)">⚠ mancante</span>
+             </div>`
+        }
+        ${r.coord_raw && !ibanOk ? `<div style="font-size:9px;color:var(--dim);margin-top:2px">${r.coord_raw}</div>` : ''}
+      </td>
+      <td style="font-size:11px;color:var(--muted)">${r.email || '—'}</td>
+      <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">- € ${fmt(r.importo)}</td>
+    </tr>`;
+  });
+
+  html += `<tr style="border-top:2px solid var(--border);font-weight:700">
+    <td colspan="7">TOTALE FILTRATO</td>
+    <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace">- € ${fmt(filtered.reduce((s,r)=>s+r.importo,0))}</td>
+  </tr>`;
+  html += '</tbody></table>';
+  document.getElementById('we-body').innerHTML = html;
+  aggiornaSelTotale();
+}
+
+async function salvaIbanManuale(idAnagr, val) {
+  const clean = val.replace(/\s/g,'').toUpperCase();
+  if (clean.length >= 15) {
+    _wiseIbanOverride[idAnagr] = clean;
+    // Abilita checkbox
+    document.querySelectorAll('.we-chk-row').forEach(chk => {
+      const key = chk.dataset.key;
+      if (key && key.startsWith(idAnagr + '_')) {
+        chk.disabled = false;
+        chk.title = '';
+      }
+    });
+    // Persisti sul server
+    await fetch('/api/wise-iban', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ id_anagr: idAnagr, iban: clean })
+    });
+    // Mostra conferma visiva nell'input
+    const inp = document.getElementById('iban-input-' + idAnagr);
+    if (inp) { inp.style.borderColor = 'var(--green)'; inp.title = '✓ IBAN salvato'; }
+  } else {
+    delete _wiseIbanOverride[idAnagr];
+  }
+  aggiornaSelTotale();
+}
+
+function selectAllWise(checked) {
+  document.querySelectorAll('.we-chk-row').forEach(chk => chk.checked = checked);
+  const allChk = document.getElementById('we-chk-all');
+  if (allChk) allChk.checked = checked;
+  aggiornaSelTotale();
+}
+
+function aggiornaSelTotale() {
+  let tot = 0;
+  document.querySelectorAll('.we-chk-row:checked').forEach(chk => {
+    tot += parseFloat(chk.dataset.importo) || 0;
+  });
+  document.getElementById('we-sel-tot').textContent = '€ ' + fmt(tot);
+}
+
+function exportWiseCSV() {
+  if (!_wiseData) return;
+
+  const selKeys = new Set();
+  document.querySelectorAll('.we-chk-row:checked').forEach(chk => selKeys.add(chk.dataset.key));
+
+  if (selKeys.size === 0) { alert('Seleziona almeno un pagamento'); return; }
+
+  const { righe } = _wiseData;
+  const rows = [['name','recipientEmail','paymentReference','receiverType','amountCurrency','amount','sourceCurrency','targetCurrency','IBAN']];
+
+  righe.forEach(r => {
+    const key = r.id_anagr + '_' + r.data_scad;
+    if (!selKeys.has(key)) return;
+
+    const ibanEff = _wiseIbanOverride[r.id_anagr] || r.iban || '';
+    const email   = r.email || '';
+    const rif     = r.rate && r.rate.length ? r.rate.join(' ') : (r.rif || 'Pagamento fattura');
+    const importo = r.importo.toFixed(2);
+
+    rows.push([
+      r.nome,
+      email,
+      rif,
+      'INSTITUTION',
+      'EUR',
+      importo,
+      'EUR',
+      'EUR',
+      ibanEff
+    ]);
+  });
+
+  // CSV con BOM per Excel
+  const csv = '\uFEFF' + rows.map(row =>
+    row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')
+  ).join('\r\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `Wise_Pagamenti_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
+// ─── OPERAZIONI IN CORSO ─────────────────────────────────
+let _operazioni = [];
+let _opLoaded = false;
+
+const BANCHE_OP = {
+  bpm_20496: { label: 'Banco BPM — C/C 20496',        icon: '🏦', valuta: 'EUR', id_saldo: 'bpm_20496' },
+  bpm_36062: { label: 'BPM C/C 36062 Fotovoltaico',   icon: '☀️', valuta: 'EUR', id_saldo: 'bpm_36062' },
+  bdm:       { label: 'BDM — C/C Principale',          icon: '🏦', valuta: 'EUR', id_saldo: 'bdm'       },
+  wise_eur:  { label: 'Wise EUR',                      icon: '💳', valuta: 'EUR', id_saldo: 'wise_eur'  },
+  wise_usd:  { label: 'Wise USD',                      icon: '💳', valuta: 'USD', id_saldo: 'wise_usd'  }
+};
+
+async function loadOperazioni() {
+  try {
+    const res = await fetch('/api/operazioni');
+    _operazioni = await res.json();
+    renderOperazioni();
+  } catch(e) {
+    document.getElementById('op-grid').innerHTML = `<div class="error-box">⚠ Errore: ${e.message}</div>`;
+  }
+}
+
+function getSaldoBanca(idSaldo) {
+  if (!_saldiBanche) return 0;
+  const b = _saldiBanche.banche.find(x => x.id === idSaldo);
+  return b ? ((b.saldo || 0) + (b.vincoli || 0)) : 0;
+}
+
+function renderOperazioni() {
+  const grid = document.getElementById('op-grid');
+  if (!grid) return;
+
+  let html = '';
+
+  for (const [bancaId, info] of Object.entries(BANCHE_OP)) {
+    const ops = _operazioni.filter(o => o.banca === bancaId);
+    const saldoBanca = getSaldoBanca(info.id_saldo);
+    const totEntrate = ops.filter(o => o.tipo === 'entrata').reduce((s,o) => s+o.importo, 0);
+    const totUscite  = ops.filter(o => o.tipo === 'uscita').reduce((s,o) => s+o.importo, 0);
+    const totNetto   = totEntrate - totUscite;
+    const disponibile = saldoBanca + totNetto;
+    const sym = info.valuta === 'USD' ? '$' : '€';
+
+    let righe = '';
+    if (ops.length === 0) {
+      righe = `<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--dim)">Nessuna operazione in corso</td></tr>`;
+    } else {
+      ops.forEach(o => {
+        const isEntrata = o.tipo === 'entrata';
+        const dataFmt = o.data ? o.data.split('-').reverse().join('/') : '—';
+        righe += `<tr>
+          <td class="mono" style="font-size:11px">${dataFmt}</td>
+          <td style="font-size:12px">${o.descrizione}</td>
+          <td class="${isEntrata ? 'qty-green' : 'qty-red'}" style="text-align:right;font-family:'DM Mono',monospace;font-size:12px">
+            ${isEntrata ? '+' : '-'} ${sym} ${fmt(o.importo)}
+          </td>
+          <td style="text-align:center">
+            <button class="btn-del" onclick="deleteOperazione(${o.id})" title="Elimina">✕</button>
+          </td>
+        </tr>`;
+      });
+    }
+
+    const totColor = totNetto >= 0 ? 'qty-green' : 'qty-red';
+    const dispColor = disponibile >= 0 ? 'qty-green' : 'qty-red';
+
+    html += `
+    <div class="card">
+      <div class="card-header">${info.icon} ${info.label}</div>
+      <table>
+        <thead><tr><th>Data</th><th>Descrizione</th><th style="text-align:right">Importo</th><th style="width:32px"></th></tr></thead>
+        <tbody>${righe}</tbody>
+      </table>
+      <div style="padding:10px 16px;border-top:1px solid var(--border);background:var(--panel2);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:var(--muted)">Saldo ${info.label.split('—')[0].trim()}</span>
+        <span class="mono qty-green" style="font-size:13px;font-weight:600">${sym} ${fmt(saldoBanca)}</span>
+      </div>
+      ${ops.length > 0 ? `
+      <div style="padding:10px 16px;background:var(--panel2);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:var(--muted)">Operazioni in corso</span>
+        <span class="mono ${totColor}" style="font-size:13px;font-weight:600">${totNetto >= 0 ? '+' : '-'} ${sym} ${fmt(Math.abs(totNetto))}</span>
+      </div>` : ''}
+      <div style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:13px;font-weight:700">Disponibilità</span>
+        <span class="mono ${dispColor}" style="font-size:15px;font-weight:700">${sym} ${fmt(disponibile)}</span>
+      </div>
+    </div>`;
+  }
+
+  grid.innerHTML = html;
+}
+
+async function addOperazione() {
+  const banca    = document.getElementById('op-banca').value;
+  const tipo     = document.getElementById('op-tipo').value;
+  const data     = document.getElementById('op-data').value;
+  const desc     = document.getElementById('op-desc').value.trim();
+  const importo  = parseFloat(document.getElementById('op-importo').value) || 0;
+
+  if (!desc || !importo || !data) { alert('Compila tutti i campi'); return; }
+
+  const res = await fetch('/api/operazioni', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ banca, tipo, data, descrizione: desc, importo })
+  });
+  const r = await res.json();
+  if (r.ok) {
+    _operazioni.push(r.op);
+    renderOperazioni();
+    document.getElementById('op-desc').value = '';
+    document.getElementById('op-importo').value = '';
+  }
+}
+
+async function deleteOperazione(id) {
+  await fetch(`/api/operazioni/${id}`, { method: 'DELETE' });
+  _operazioni = _operazioni.filter(o => o.id !== id);
+  renderOperazioni();
+}
+
+
+// ─── SEGNA PAGATI IN DANEA ───────────────────────────────
+async function segnaPagatiDanea() {
+  if (_ribaSelected && _ribaSelected.size === 0 && document.querySelectorAll('.we-chk-row:checked').length === 0) {
+    alert('Seleziona almeno un pagamento'); return;
+  }
+
+  // Raccogli tutti gli IDPrimaNota originali dalle righe selezionate
+  const selKeys = new Set();
+  document.querySelectorAll('.we-chk-row:checked').forEach(chk => selKeys.add(chk.dataset.key));
+
+  if (selKeys.size === 0) { alert('Seleziona almeno un pagamento'); return; }
+
+  const { righe } = _wiseData;
+  let allIds = [];
+  righe.forEach(r => {
+    const key = r.id_anagr + '_' + r.data_scad;
+    if (selKeys.has(key)) allIds = allIds.concat(r.ids || [r.id]);
+  });
+
+  if (!allIds.length) { alert('Nessun ID trovato'); return; }
+
+  const dataPag = prompt(
+    `Segna ${selKeys.size} pagamenti (${allIds.length} scadenze) come SALDATI in Danea.
+
+Data pagamento (YYYY-MM-DD):`,
+    new Date().toISOString().slice(0,10)
+  );
+  if (!dataPag) return;
+
+  if (!confirm(`Conferma: aggiornare ${allIds.length} scadenze in Danea con Saldato=1 e DataPagam=${dataPag}?\n\nQuesta operazione NON è reversibile dall'interfaccia.`)) return;
+
+  try {
+    const res = await fetch('/api/wise/segna-pagati', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ids: allIds, data_pagamento: dataPag })
+    });
+    const r = await res.json();
+    if (r.ok) {
+      alert(`✓ ${r.aggiornati} scadenze aggiornate in Danea come pagate.`);
+      // Ricarica i dati
+      _wiseLoaded = false;
+      await loadWise();
+    } else {
+      alert('Errore: ' + r.error);
+    }
+  } catch(e) {
+    alert('Errore: ' + e.message);
+  }
+}
+
+// ─── INIT ────────────────────────────────────────────────
+loadData();
+_bancheLoaded = true; loadSaldiBanche();
+_opLoaded = true; loadOperazioni();
+</script>
+
+
+</div><!-- end .main cashflow -->
+</div><!-- end tab-cashflow -->
+
+<!-- TAB: SALDO BANCHE -->
+<div id="tab-banche" class="tab-content active">
+<div class="main">
+
+  <!-- Totale + aggiornamento -->
+  <div class="bank-total-card" id="banche-total-card">
+    <div>
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Totale Liquidità AEC (EUR)</div>
+      <div style="font-family:'DM Mono',monospace;font-size:28px;font-weight:700;color:var(--green)" id="banche-totale-eur">€ —</div>
+      <div style="font-family:'DM Mono',monospace;font-size:16px;color:var(--muted);margin-top:4px" id="banche-totale-usd">$ —</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px" id="banche-aggiornato">Mai aggiornato</div>
+      <button class="btn-add" onclick="saveSaldiBanche()" id="btn-save-banche" style="opacity:.5;cursor:default" disabled>✓ Salva Saldi</button>
+    </div>
+  </div>
+
+  <!-- Cards banche -->
+  <div class="banks-grid" id="banks-grid">
+    <div class="loading" style="padding:40px;color:var(--muted)">Caricamento...</div>
+  </div>
+
+  <!-- Riepilogo -->
+  <div class="card">
+    <div class="card-header">📊 Riepilogo Banche</div>
+    <table>
+      <thead><tr><th>Banca / Conto</th><th>Valuta</th><th style="text-align:right">Saldo C/C</th><th style="text-align:right">Vincoli</th><th style="text-align:right">Liquidità Netta</th></tr></thead>
+      <tbody id="banche-riepilogo-tbody">
+        <tr><td colspan="5" class="loading">Caricamento...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</div><!-- end tab-banche -->
+
+<!-- TAB: OPERAZIONI IN CORSO -->
+<div id="tab-operazioni" class="tab-content">
+<div class="main">
+
+  <!-- Form aggiunta operazione -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-header">➕ Nuova Operazione in Corso</div>
+    <div class="form-voce">
+      <div class="form-group">
+        <label>Banca</label>
+        <select id="op-banca">
+          <option value="bpm_20496">Banco BPM C/C 20496</option>
+          <option value="bpm_36062">Banco BPM C/C 36062 Fotovoltaico</option>
+          <option value="bdm">BDM</option>
+          <option value="wise_eur">Wise EUR</option>
+          <option value="wise_usd">Wise USD</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="op-tipo">
+          <option value="entrata">▲ Entrata</option>
+          <option value="uscita">▼ Uscita</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Data</label>
+        <input type="date" id="op-data" style="color-scheme:dark">
+      </div>
+      <div class="form-group">
+        <label>Descrizione</label>
+        <input type="text" id="op-desc" placeholder="Es. Bonifico a fornitore..." style="width:220px">
+      </div>
+      <div class="form-group">
+        <label>Importo €</label>
+        <input type="number" id="op-importo" placeholder="0.00" step="0.01" style="width:120px">
+      </div>
+      <button class="btn-add" onclick="addOperazione()">+ Aggiungi</button>
+    </div>
+  </div>
+
+  <!-- Griglia banche -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px" id="op-grid">
+    <div class="loading" style="grid-column:1/-1;padding:40px;text-align:center">Caricamento...</div>
+  </div>
+
+</div>
+</div><!-- end tab-operazioni -->
+
+<!-- TAB: RIBA -->
+<div id="tab-riba" class="tab-content">
+<div class="main">
+
+  <!-- KPI RIBA -->
+  <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))" id="riba-kpis">
+    <div class="kpi"><div class="kpi-label">RiBa da Incassare</div><div class="kpi-val green" id="rk-attese">—</div></div>
+    <div class="kpi"><div class="kpi-label">RiBa Presentate SBF</div><div class="kpi-val blue" id="rk-presentate">—</div></div>
+    <div class="kpi"><div class="kpi-label">Addebiti RiBa Passivi</div><div class="kpi-val red" id="rk-negative">—</div></div>
+    <div class="kpi"><div class="kpi-label">Totale Portafoglio</div><div class="kpi-val orange" id="rk-totale">—</div></div>
+  </div>
+
+  <!-- Form presenta -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-header">⚙️ Gestione Presentazione SBF</div>
+    <div class="riba-form-presenta">
+      <div class="form-group">
+        <label>Banca</label>
+        <select id="riba-banca" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px">
+          <option value="BDM">BDM</option>
+          <option value="Banco BPM">Banco BPM</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Data Presentazione</label>
+        <input type="date" id="riba-data-pres" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;color-scheme:dark">
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <button class="btn-add" onclick="presentaSelezionate(true)" style="background:var(--green)">✓ Segna Presentate</button>
+        <button class="btn-add" onclick="presentaSelezionate(false)" style="background:var(--panel3);border:1px solid var(--border)">✕ Rimuovi Presentazione</button>
+        <button class="btn-add" onclick="generaCBI()" style="background:#1e40af;border:1px solid #3b82f6">📄 Genera File CBI</button>
+        <span style="font-size:11px;color:var(--muted);align-self:center" id="riba-sel-count">0 selezionate</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabella RiBa raggruppata per scadenza -->
+  <div class="card" id="riba-card">
+    <div class="card-header">
+      📋 Portafoglio RiBa — Da Easyfatt
+      <span class="card-badge" id="riba-badge">0</span>
+    </div>
+    <div id="riba-body"><div class="loading">Caricamento...</div></div>
+  </div>
+
+</div>
+</div><!-- end tab-riba -->
+
+
+<!-- TAB: RIBA FORNITORI -->
+<div id="tab-riba-fornitori" class="tab-content">
+<div class="main">
+
+  <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+    <div class="kpi"><div class="kpi-label">Totale da Pagare</div><div class="kpi-val red" id="rf-totale">—</div></div>
+    <div class="kpi"><div class="kpi-label">Già Scadute</div><div class="kpi-val orange" id="rf-scadute">—</div></div>
+    <div class="kpi"><div class="kpi-label">N° RiBa Aperte</div><div class="kpi-val blue" id="rf-count">—</div></div>
+    <div class="kpi"><div class="kpi-label">N° Fornitori</div><div class="kpi-val" style="color:var(--cyan)" id="rf-fornitori">—</div></div>
+  </div>
+
+  <div class="two-col">
+
+    <!-- Per scadenza -->
+    <div class="card">
+      <div class="card-header">
+        📅 Per Data di Scadenza
+        <span class="card-badge" id="rf-badge-scad">0</span>
+      </div>
+      <div id="rf-body-scad"><div class="loading">Caricamento...</div></div>
+    </div>
+
+    <!-- Per fornitore -->
+    <div class="card">
+      <div class="card-header">
+        🏭 Per Fornitore
+        <span class="card-badge" id="rf-badge-forn">0</span>
+      </div>
+      <div id="rf-body-forn"><div class="loading">Caricamento...</div></div>
+    </div>
+
+  </div>
+
+  <!-- Dettaglio completo -->
+  <div class="card">
+    <div class="card-header">
+      📋 Dettaglio Completo RiBa Passive
+      <span class="card-badge" id="rf-badge-det">0</span>
+    </div>
+    <div style="overflow-x:auto" id="rf-body-det"><div class="loading">Caricamento...</div></div>
+  </div>
+
+</div>
+</div><!-- end tab-riba-fornitori -->
+
+<!-- TAB: WISE EXPORT -->
+<div id="tab-wise" class="tab-content">
+<div class="main">
+
+  <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+    <div class="kpi"><div class="kpi-label">Totale da Pagare</div><div class="kpi-val red" id="we-totale">—</div></div>
+    <div class="kpi"><div class="kpi-label">Selezionati</div><div class="kpi-val blue" id="we-sel-tot">€ 0,00</div></div>
+    <div class="kpi"><div class="kpi-label">Con IBAN</div><div class="kpi-val green" id="we-con-iban">—</div></div>
+    <div class="kpi"><div class="kpi-label">Senza IBAN</div><div class="kpi-val orange" id="we-senza-iban">—</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      💸 Pagamenti Fornitori — Genera CSV Wise
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button class="btn-add" onclick="ricaricaWise()" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">🔄 Aggiorna</button>
+        <button class="btn-add" onclick="selectAllWise(true)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Seleziona tutti</button>
+        <button class="btn-add" onclick="selectAllWise(false)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Deseleziona</button>
+        <button class="btn-add" onclick="exportWiseCSV()" style="background:#2d6a4f;border:1px solid #40916c">⬇ Scarica CSV Wise</button>
+        <button class="btn-add" onclick="segnaPagatiDanea()" style="background:#7c3aed;border:1px solid #a855f7">✓ Segna Pagati in Danea</button>
+      </div>
+    </div>
+
+    <!-- Filtri -->
+    <div class="filtri">
+      <label>Scadenza da:</label>
+      <input type="date" id="we-da" oninput="renderWise()" style="color-scheme:dark">
+      <label>a:</label>
+      <input type="date" id="we-a" oninput="renderWise()" style="color-scheme:dark">
+      <div class="filtri-spacer"></div>
+      <label style="font-size:11px;color:var(--muted)">
+        <input type="checkbox" id="we-solo-iban" onchange="renderWise()" style="margin-right:4px">
+        Solo con IBAN
+      </label>
+      <label style="font-size:11px;color:var(--muted);margin-left:12px">
+        <input type="checkbox" id="we-solo-italia" onchange="renderWise()" style="margin-right:4px">
+        Solo italiani
+      </label>
+    </div>
+
+    <div style="overflow-x:auto" id="we-body">
+      <div class="loading">Caricamento...</div>
+    </div>
+  </div>
+
+</div>
+</div><!-- end tab-wise -->
+
+<!-- TAB: RID AUTOMATICI -->
+<div id="tab-rid" class="tab-content">
+<div class="main">
+
+  <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+    <div class="kpi"><div class="kpi-label">Costo Mensile Fisso</div><div class="kpi-val red">€ 8.323 / mese</div></div>
+    <div class="kpi"><div class="kpi-label">Costo Trimestrale</div><div class="kpi-val orange">€ 39.650 / trim.</div></div>
+    <div class="kpi"><div class="kpi-label">Costo Annuale</div><div class="kpi-val orange">€ 4.302 / anno</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">🔄 RID e Addebiti Automatici</div>
+    <table>
+      <thead><tr><th>Frequenza</th><th>Descrizione</th><th>Banca</th><th style="text-align:right">Importo</th></tr></thead>
+      <tbody>
+        <tr style="background:rgba(239,68,68,.04)">
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,.15);color:var(--accent)">Fine Mese</span></td>
+          <td>Finanziamento 84 mesi MCC 27/02/18 — scad. 31/12/26</td>
+          <td class="mono" style="color:var(--cyan)">BDM</td>
+          <td class="qty-red" style="text-align:right">- € 2.663</td>
+        </tr>
+        <tr>
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,.15);color:var(--accent)">Fine Mese</span></td>
+          <td>Finanziamento 72 mesi MCC 15/09/20 — scad. 30/09/26</td>
+          <td class="mono" style="color:var(--cyan)">BDM</td>
+          <td class="qty-red" style="text-align:right">- € 4.678</td>
+        </tr>
+        <tr style="background:rgba(239,68,68,.04)">
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,.15);color:var(--accent)">Fine Mese</span></td>
+          <td>Leasing Tesla — FCA Bank</td>
+          <td class="mono" style="color:var(--cyan)">BDM</td>
+          <td class="qty-red" style="text-align:right">- € 533</td>
+        </tr>
+        <tr>
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,.15);color:var(--accent)">Fine Mese</span></td>
+          <td>Noleggio Toyota Yaris — ALD Automotive</td>
+          <td class="mono" style="color:var(--cyan)">BDM</td>
+          <td class="qty-red" style="text-align:right">- € 449</td>
+        </tr>
+        <tr style="background:rgba(239,68,68,.04)">
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(245,158,11,.15);color:var(--orange)">Trimestrale</span></td>
+          <td>Affitto — Oznerol SRL</td>
+          <td class="mono" style="color:var(--muted)">Trimestrale</td>
+          <td class="qty-red" style="text-align:right">- € 29.280</td>
+        </tr>
+        <tr>
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(245,158,11,.15);color:var(--orange)">Trimestrale</span></td>
+          <td>Muletto — Oznerol SRL</td>
+          <td class="mono" style="color:var(--muted)">Trimestrale</td>
+          <td class="qty-red" style="text-align:right">- € 10.370</td>
+        </tr>
+        <tr style="background:rgba(239,68,68,.04)">
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(34,197,94,.1);color:var(--green)">21/12/26</span></td>
+          <td>Assicurazione Tesla GB811GT — Telepass Assicurazione</td>
+          <td class="mono" style="color:var(--muted)">Annuale</td>
+          <td class="qty-red" style="text-align:right">- € 270</td>
+        </tr>
+        <tr>
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(34,197,94,.1);color:var(--green)">28/05/26</span></td>
+          <td>Assicurazione Tesla GN814VY — AXA</td>
+          <td class="mono" style="color:var(--muted)">Annuale</td>
+          <td class="qty-red" style="text-align:right">- € 513</td>
+        </tr>
+        <tr style="background:rgba(239,68,68,.04)">
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(34,197,94,.1);color:var(--green)">31/12/26</span></td>
+          <td>Assicurazione Capannone Oznerol — Busnelli/Zurich</td>
+          <td class="mono" style="color:var(--muted)">Annuale</td>
+          <td class="qty-red" style="text-align:right">- € 868</td>
+        </tr>
+        <tr>
+          <td><span style="font-size:10px;padding:2px 8px;border-radius:4px;background:rgba(34,197,94,.1);color:var(--green)">02/04/26</span></td>
+          <td>Assicurazione Incendio/Furto Capannone RCT AEC — Busnelli/Zurich</td>
+          <td class="mono" style="color:var(--muted)">Annuale</td>
+          <td class="qty-red" style="text-align:right">- € 2.651</td>
+        </tr>
+        <tr style="border-top:2px solid var(--border);font-weight:700">
+          <td colspan="3">Totale mensile fisso (fine mese)</td>
+          <td class="qty-red" style="text-align:right">- € 8.323 / mese</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</div><!-- end tab-rid -->
+
+</body>
+</html>
