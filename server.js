@@ -989,18 +989,31 @@ app.get('/api/fatture-sdi/pdf/:idagyo', async (req, res) => {
       }
       let lista;
       try { lista = JSON.parse(listResp.body.toString('utf8')); } catch(e) {
-        return res.status(502).json({ error: 'Risposta API non JSON' });
+        return res.status(502).json({ error: 'Risposta API non JSON', raw: listResp.body.toString('utf8').slice(0,300) });
       }
       if (!Array.isArray(lista)) lista = lista.fatture || lista.data || lista.results || [];
-      // Popola cache per tutte le fatture ricevute
+      // Popola cache per tutte le fatture (con e senza estensione)
       lista.forEach(f => {
-        const k = (f.sdi_nome_file || '').replace(/\.(p7m|xml)$/i, '');
+        const raw = (f.sdi_nome_file || '').trim();
+        // chiave senza estensioni
+        const k = raw.replace(/\.(p7m|xml)$/i, '').replace(/\.(p7m|xml)$/i, '');
         if (k && f.id) _fetApiCache[k] = f.id;
+        // chiave anche col nome raw (senza nessuna modifica)
+        if (raw && f.id) _fetApiCache[raw] = f.id;
       });
+      console.log(`[FetAPI] Lista: ${lista.length} fatture, esempi nomi:`, lista.slice(0,3).map(f => f.sdi_nome_file));
     }
 
     const apiId = _fetApiCache[nomefile];
-    if (!apiId) return res.status(404).json({ error: `Fattura "${nomefile}" non trovata sull'API fattura-elettronica-api.it` });
+    if (!apiId) {
+      // Mostra esempi per debug
+      const esempi = Object.keys(_fetApiCache).slice(0, 5);
+      return res.status(404).json({
+        error: `Fattura "${nomefile}" non trovata sull'API`,
+        cercato: nomefile,
+        esempi_api: esempi
+      });
+    }
 
     // 3. Scarica PDF e proxy al browser
     const pdfResp = await fetApiGet(`/fatture/${apiId}/pdf`);
