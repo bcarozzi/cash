@@ -800,6 +800,22 @@ function calcolaRateDaPagamento(dataDoc, pagamentoDefault) {
 }
 
 // ─── FATTURE SDI: lista da pagare ────────────────────────────────────────────
+// ─── DEBUG: lista tutte le tabelle Firebird ───────────────────────────────────
+app.get('/api/debug/tables', async (req, res) => {
+  try {
+    const rows = await query(`SELECT RDB$RELATION_NAME FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 ORDER BY RDB$RELATION_NAME`);
+    res.json(rows.map(r => r['rdb$relation_name'].trim()));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── DEBUG: campi di una tabella ──────────────────────────────────────────────
+app.get('/api/debug/columns/:table', async (req, res) => {
+  try {
+    const rows = await query(`SELECT RDB$FIELD_NAME, RDB$FIELD_SOURCE FROM RDB$RELATION_FIELDS WHERE RDB$RELATION_NAME = '${req.params.table.toUpperCase()}' ORDER BY RDB$FIELD_POSITION`);
+    res.json(rows.map(r => r['rdb$field_name'].trim()));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── DEBUG: campi TAgyo per una fattura ──────────────────────────────────────
 app.get('/api/debug/tagyo/:idagyo', async (req, res) => {
   try {
