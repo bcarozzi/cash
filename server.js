@@ -109,39 +109,56 @@ app.get('/api/cashflow', async (req, res) => {
     const data = loadData();
     const wiseSaldati = data.wise_saldati || {};
 
-    const rows = await query(`
-      SELECT p."Importo", p."DataScad", p."IDAnagr", p."Saldato",
-             p."NomePagamDoc", p."IDDoc",
-             a."Nome", a."Cliente", a."Fornitore"
+    // Query incassi (clienti, Importo > 0)
+    const incassiRows = await query(`
+      SELECT p."Importo", p."DataScad", p."IDAnagr",
+             p."NomePagamDoc", p."IDDoc", a."Nome"
       FROM "TPrimaNota" p
       LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
-      WHERE p."Saldato" = 0
+      WHERE p."Saldato" = 0 AND p."Importo" > 0
       ORDER BY p."DataScad" ASC
     `);
 
-    const incassi  = [];
-    const pagByKey = {}; // raggruppa per IDAnagr+DataScad (stesso fornitore stesso giorno = una riga)
+    // Query pagamenti fornitori — filtro IDENTICO a /api/wise-export
+    const pagamentiRows = await query(`
+      SELECT p."Importo", p."DataScad", p."IDAnagr",
+             p."NomePagamDoc", p."IDDoc", a."Nome"
+      FROM "TPrimaNota" p
+      LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
+      WHERE p."Saldato" = 0
+        AND p."Importo" < 0
+        AND (p."CategPagamento" IS NULL OR p."CategPagamento" <> 'Riba')
+      ORDER BY p."DataScad" ASC
+    `);
 
-    rows.forEach(r => {
-      const imp = Number(r.importo) || 0;
+    const incassi = incassiRows.map(r => ({
+      data_scad: isoDate(r.datascad),
+      data_fmt:  fmtDate(r.datascad),
+      importo:   Math.abs(Number(r.importo) || 0),
+      nome:      (r.nome || '').trim(),
+      tipo_pagam:(r.nomepagamdoc || '').trim(),
+      id_doc:    r.iddoc,
+      tipo:      'incasso'
+    }));
+
+    // Raggruppa pagamenti per IDAnagr+DataScad (stesso fornitore stesso giorno = una riga)
+    const pagByKey = {};
+    pagamentiRows.forEach(r => {
+      const imp = Math.abs(Number(r.importo) || 0);
       const key = String(r.idanagr) + '_' + isoDate(r.datascad);
-      if (imp < 0 && wiseSaldati[key]) return;
-      const entry = {
-        data_scad: isoDate(r.datascad),
-        data_fmt:  fmtDate(r.datascad),
-        importo:   Math.abs(imp),
-        nome:      (r.nome || '').trim(),
-        tipo_pagam:(r.nomepagamdoc || '').trim(),
-        id_doc:    r.iddoc
-      };
-      if (imp > 0) {
-        incassi.push({ ...entry, tipo: 'incasso' });
-      } else if (imp < 0) {
-        if (!pagByKey[key]) {
-          pagByKey[key] = { ...entry, tipo: 'pagamento' };
-        } else {
-          pagByKey[key].importo += entry.importo;
-        }
+      if (wiseSaldati[key]) return;
+      if (!pagByKey[key]) {
+        pagByKey[key] = {
+          data_scad: isoDate(r.datascad),
+          data_fmt:  fmtDate(r.datascad),
+          importo:   imp,
+          nome:      (r.nome || '').trim(),
+          tipo_pagam:(r.nomepagamdoc || '').trim(),
+          id_doc:    r.iddoc,
+          tipo:      'pagamento'
+        };
+      } else {
+        pagByKey[key].importo += imp;
       }
     });
 
