@@ -1,31 +1,8 @@
-console.log('[AEC Cash] Avvio in corso...');
 const express = require('express');
 const Firebird = require('node-firebird');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const https = require('https');
-console.log('[AEC Cash] Moduli caricati OK');
-
-// ─── FATTURA ELETTRONICA API ──────────────────────────────────────────────────
-const FETAPI_BASE  = 'fattura-elettronica-api.it';
-const FETAPI_PATH  = '/ws2.0/prod';
-const FETAPI_AUTH  = Buffer.from('bcarozzi@gmail.com:QBlGQVGG').toString('base64');
-const _fetApiCache = {}; // NomeFile (senza ext) → ID API
-
-function fetApiGet(subpath) {
-  return new Promise((resolve, reject) => {
-    https.get({
-      hostname: FETAPI_BASE,
-      path: FETAPI_PATH + subpath,
-      headers: { 'Authorization': 'Basic ' + FETAPI_AUTH }
-    }, res => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
-    }).on('error', reject);
-  });
-}
 
 const app = express();
 app.use(cors());
@@ -800,41 +777,6 @@ function calcolaRateDaPagamento(dataDoc, pagamentoDefault) {
 }
 
 // ─── FATTURE SDI: lista da pagare ────────────────────────────────────────────
-// ─── DEBUG: lista tutte le tabelle Firebird ───────────────────────────────────
-app.get('/api/debug/tables', async (req, res) => {
-  try {
-    const rows = await query(`SELECT RDB$RELATION_NAME FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 ORDER BY RDB$RELATION_NAME`);
-    res.json(rows.map(r => r['rdb$relation_name'].trim()));
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── DEBUG: campi di una tabella ──────────────────────────────────────────────
-app.get('/api/debug/columns/:table', async (req, res) => {
-  try {
-    const rows = await query(`SELECT RDB$FIELD_NAME, RDB$FIELD_SOURCE FROM RDB$RELATION_FIELDS WHERE RDB$RELATION_NAME = '${req.params.table.toUpperCase()}' ORDER BY RDB$FIELD_POSITION`);
-    res.json(rows.map(r => r['rdb$field_name'].trim()));
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ─── DEBUG: campi TAgyo per una fattura ──────────────────────────────────────
-app.get('/api/debug/tagyo/:idagyo', async (req, res) => {
-  try {
-    const id = req.params.idagyo;
-    const rows = await query(`SELECT * FROM "TAgyo" WHERE "IDAgyo" = '${id}'`);
-    if (!rows.length) return res.status(404).json({ error: 'non trovata' });
-    const r = rows[0];
-    // Mostra tutti i campi (tranne BLOB pesanti — tronca a 200 char)
-    const info = {};
-    for (const k of Object.keys(r)) {
-      const v = r[k];
-      if (Buffer.isBuffer(v)) info[k] = `[BLOB ${v.length} bytes]`;
-      else if (typeof v === 'string' && v.length > 200) info[k] = v.slice(0,200) + '...';
-      else info[k] = v;
-    }
-    res.json(info);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
 app.get('/api/fatture-sdi', async (req, res) => {
   try {
     const data = loadData();
@@ -996,73 +938,6 @@ app.get('/api/fatture-sdi/storico', (req, res) => {
   const data = loadData();
   const commenti = data.storico_commenti || {};
   res.json({ storico: (data.sdi_storico || []).slice().reverse().map(b => ({...b, commento: commenti[b.batch_id] || ''})) });
-});
-
-// ─── FATTURE SDI: visualizza PDF da fattura-elettronica-api.it ───────────────
-app.get('/api/fatture-sdi/pdf/:idagyo', async (req, res) => {
-  try {
-    const idagyo = req.params.idagyo;
-    // IDAgyo in TAgyo è un UUID (GUID) — valida formato
-    if (!/^[0-9a-f-]{8,36}$/i.test(idagyo)) return res.status(400).json({ error: 'idagyo non valido' });
-
-    // 1. Leggi NomeFile da TAgyo
-    let rows;
-    try {
-      rows = await query(`SELECT "NomeFile" FROM "TAgyo" WHERE "IDAgyo" = '${idagyo}'`);
-    } catch(e) { return res.status(500).json({ error: 'Query TAgyo: ' + e.message }); }
-    if (!rows.length) return res.status(404).json({ error: 'Fattura non trovata in TAgyo' });
-    const nomefileRaw = (rows[0].nomefile || '').trim();
-    const nomefile = nomefileRaw.replace(/\.(p7m|xml)$/i, '');
-    if (!nomefile) return res.status(404).json({ error: 'NomeFile vuoto in TAgyo' });
-
-    // 2. Trova ID API (con cache in memoria — non spreca credito)
-    if (!_fetApiCache[nomefile]) {
-      const listResp = await fetApiGet('/fatture?per_page=1000');
-      if (listResp.status !== 200) {
-        const msg = listResp.body.toString('utf8').slice(0, 200);
-        return res.status(502).json({ error: `API lista HTTP ${listResp.status}: ${msg}` });
-      }
-      let lista;
-      try { lista = JSON.parse(listResp.body.toString('utf8')); } catch(e) {
-        return res.status(502).json({ error: 'Risposta API non JSON', raw: listResp.body.toString('utf8').slice(0,300) });
-      }
-      if (!Array.isArray(lista)) lista = lista.fatture || lista.data || lista.results || [];
-      // Popola cache per tutte le fatture (con e senza estensione)
-      lista.forEach(f => {
-        const raw = (f.sdi_nome_file || '').trim();
-        // chiave senza estensioni
-        const k = raw.replace(/\.(p7m|xml)$/i, '').replace(/\.(p7m|xml)$/i, '');
-        if (k && f.id) _fetApiCache[k] = f.id;
-        // chiave anche col nome raw (senza nessuna modifica)
-        if (raw && f.id) _fetApiCache[raw] = f.id;
-      });
-      console.log(`[FetAPI] Lista: ${lista.length} fatture, esempi nomi:`, lista.slice(0,3).map(f => f.sdi_nome_file));
-    }
-
-    const apiId = _fetApiCache[nomefile];
-    if (!apiId) {
-      // Mostra esempi per debug
-      const esempi = Object.keys(_fetApiCache).slice(0, 5);
-      return res.status(404).json({
-        error: `Fattura "${nomefile}" non trovata sull'API`,
-        cercato: nomefile,
-        esempi_api: esempi
-      });
-    }
-
-    // 3. Scarica PDF e proxy al browser
-    const pdfResp = await fetApiGet(`/fatture/${apiId}/pdf`);
-    if (pdfResp.status !== 200) {
-      return res.status(502).json({ error: `API PDF HTTP ${pdfResp.status}` });
-    }
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${nomefile}.pdf"`);
-    res.send(pdfResp.body);
-
-  } catch(e) {
-    console.error('Errore PDF fattura:', e.message);
-    res.status(500).json({ error: e.message });
-  }
 });
 
 // ─── STORICO: set commento su batch ──────────────────────────────────────────
