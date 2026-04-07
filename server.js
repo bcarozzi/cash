@@ -120,7 +120,7 @@ app.get('/api/cashflow', async (req, res) => {
     `);
 
     const incassi  = [];
-    const pagamenti = [];
+    const pagByKey = {}; // raggruppa per IDAnagr+DataScad (stesso fornitore stesso giorno = una riga)
 
     rows.forEach(r => {
       const imp = Number(r.importo) || 0;
@@ -137,11 +137,15 @@ app.get('/api/cashflow', async (req, res) => {
       if (imp > 0) {
         incassi.push({ ...entry, tipo: 'incasso' });
       } else if (imp < 0) {
-        pagamenti.push({ ...entry, tipo: 'pagamento' });
+        if (!pagByKey[key]) {
+          pagByKey[key] = { ...entry, tipo: 'pagamento' };
+        } else {
+          pagByKey[key].importo += entry.importo;
+        }
       }
     });
 
-    pagamenti.sort((a,b) => (a.data_scad||'') < (b.data_scad||'') ? -1 : 1);
+    const pagamenti = Object.values(pagByKey).sort((a,b) => (a.data_scad||'') < (b.data_scad||'') ? -1 : 1);
 
     res.json({
       saldo_iniziale: data.saldo_iniziale,
