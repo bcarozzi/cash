@@ -800,6 +800,25 @@ function calcolaRateDaPagamento(dataDoc, pagamentoDefault) {
 }
 
 // ─── FATTURE SDI: lista da pagare ────────────────────────────────────────────
+// ─── DEBUG: campi TAgyo per una fattura ──────────────────────────────────────
+app.get('/api/debug/tagyo/:idagyo', async (req, res) => {
+  try {
+    const id = req.params.idagyo;
+    const rows = await query(`SELECT * FROM "TAgyo" WHERE "IDAgyo" = '${id}'`);
+    if (!rows.length) return res.status(404).json({ error: 'non trovata' });
+    const r = rows[0];
+    // Mostra tutti i campi (tranne BLOB pesanti — tronca a 200 char)
+    const info = {};
+    for (const k of Object.keys(r)) {
+      const v = r[k];
+      if (Buffer.isBuffer(v)) info[k] = `[BLOB ${v.length} bytes]`;
+      else if (typeof v === 'string' && v.length > 200) info[k] = v.slice(0,200) + '...';
+      else info[k] = v;
+    }
+    res.json(info);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/fatture-sdi', async (req, res) => {
   try {
     const data = loadData();
