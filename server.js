@@ -966,13 +966,14 @@ app.get('/api/fatture-sdi/storico', (req, res) => {
 // ─── FATTURE SDI: visualizza PDF da fattura-elettronica-api.it ───────────────
 app.get('/api/fatture-sdi/pdf/:idagyo', async (req, res) => {
   try {
-    const idagyo = parseInt(req.params.idagyo, 10);
-    if (isNaN(idagyo)) return res.status(400).json({ error: 'idagyo non valido' });
+    const idagyo = req.params.idagyo;
+    // IDAgyo in TAgyo è un UUID (GUID) — valida formato
+    if (!/^[0-9a-f-]{8,36}$/i.test(idagyo)) return res.status(400).json({ error: 'idagyo non valido' });
 
     // 1. Leggi NomeFile da TAgyo
     let rows;
     try {
-      rows = await query(`SELECT "NomeFile" FROM "TAgyo" WHERE "IDAgyo" = ${idagyo}`);
+      rows = await query(`SELECT "NomeFile" FROM "TAgyo" WHERE "IDAgyo" = '${idagyo}'`);
     } catch(e) { return res.status(500).json({ error: 'Query TAgyo: ' + e.message }); }
     if (!rows.length) return res.status(404).json({ error: 'Fattura non trovata in TAgyo' });
     const nomefileRaw = (rows[0].nomefile || '').trim();
