@@ -1548,7 +1548,15 @@ function renderSdi() {
       <td style="text-align:center;padding:8px 6px">
         <input type="checkbox" class="sdi-chk-row" data-id="${esc(f.id)}" data-importo="${f.importo}" onchange="aggiornaSelTotaleSdi()">
       </td>
-      <td style="font-size:12px;font-weight:500">${esc(f.nome)}</td>
+      <td style="font-size:12px;font-weight:500">
+        ${f.id_agyo
+          ? `<a href="/api/fatture-sdi/pdf/${f.id_agyo}" target="_blank"
+               title="Apri fattura PDF"
+               style="color:var(--text);text-decoration:none;cursor:pointer"
+               onmouseover="this.style.color='var(--accent)'"
+               onmouseout="this.style.color='var(--text)'">${esc(f.nome)} <span style="font-size:10px;opacity:.5">↗</span></a>`
+          : esc(f.nome)}
+      </td>
       <td style="font-size:11px;color:var(--muted)">${esc(f.numdoc)}</td>
       <td style="font-size:11px;color:var(--cyan);text-align:center">${f.rata_n ? `<span style="background:rgba(8,145,178,.15);border-radius:4px;padding:2px 6px">${f.rata_n}</span>` : ''}</td>
       <td class="mono" style="font-size:12px">${f.data_doc || '—'}</td>
