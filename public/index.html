@@ -7,6 +7,7 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     :root {
       --bg:       #0d1525;
@@ -23,6 +24,31 @@
       --orange:   #f59e0b;
       --cyan:     #06b6d4;
     }
+    html.light {
+      --bg: #f0f2f5;
+      --panel: #ffffff;
+      --panel2: #e8ecf1;
+      --panel3: #dde3ed;
+      --border: #d0d5dd;
+      --text: #1e293b;
+      --muted: #64748b;
+      --dim: #94a3b8;
+      --accent: #2563eb;
+      --green: #059669;
+      --red: #dc2626;
+      --orange: #d97706;
+      --cyan: #0891b2;
+    }
+    html.light input, html.light select {
+      background: #f8fafc !important;
+      color: #1e293b !important;
+      border-color: #cbd5e1 !important;
+    }
+    html.light .kpi { border-color: #e2e8f0; }
+    html.light .card { border-color: #e2e8f0; }
+    html.light table td, html.light table th { border-color: #e2e8f0 !important; }
+    html.light .tab-btn { color: #64748b; }
+    html.light .tab-btn.active { color: #2563eb; border-color: #2563eb; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
@@ -424,17 +450,21 @@
   </div>
   <button class="btn-export" onclick="exportExcel()" style="margin-left:10px">📊 EXPORT</button>
   <button class="btn-print" onclick="window.print()" style="margin-left:6px">🖨️ PRINT</button>
+  <button id="theme-toggle" onclick="toggleTheme()" style="background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:16px;margin-left:8px;transition:background .2s" title="Cambia tema">🌙</button>
 </header>
 
 
 <nav class="tab-nav">
   <button class="tab-btn active" onclick="switchTab('banche')">🏦 Saldi Banche</button>
-  <button class="tab-btn" onclick="switchTab('operazioni')">⚡ Operazioni in Corso</button>
-  <button class="tab-btn" onclick="switchTab('riba')">📋 RIBA Attive</button>
-  <button class="tab-btn" onclick="switchTab('riba-fornitori')">🏭 RIBA Fornitori</button>
-  <button class="tab-btn" onclick="switchTab('wise')">💳 Pagamenti Fornitori Wise</button>
-  <button class="tab-btn" onclick="switchTab('rid')">🔄 RID Automatici</button>
   <button class="tab-btn" onclick="switchTab('cashflow')">💰 Cashflow</button>
+  <button class="tab-btn" onclick="switchTab('riba')">📋 RIBA Clienti</button>
+  <button class="tab-btn" onclick="switchTab('riba-fornitori')">🏭 RIBA Fornitori</button>
+  <button class="tab-btn" onclick="switchTab('wise')">💳 Pagamenti Fornitori</button>
+  <button class="tab-btn" onclick="switchTab('storico-wise')">📋 Storico Pagamenti</button>
+  <button class="tab-btn" onclick="switchTab('fatture-sdi')">💸 Fatture da Pagare</button>
+  <button class="tab-btn" onclick="switchTab('rid')">🔄 RID Automatici</button>
+  <button class="tab-btn" onclick="switchTab('operazioni')">⚡ Operazioni in Corso</button>
+  <button class="tab-btn" onclick="switchTab('f24')">📄 F24</button>
 </nav>
 
 <div id="tab-cashflow" class="tab-content">
@@ -480,6 +510,9 @@
         <input type="date" id="f-inc-da" oninput="renderAll()" style="color-scheme:dark">
         <label>A:</label>
         <input type="date" id="f-inc-a" oninput="renderAll()" style="color-scheme:dark">
+        <button onclick="setCashMese('inc',0)"  style="font-size:10px;padding:4px 8px;background:var(--accent);border:1px solid var(--accent);color:#fff;border-radius:4px;cursor:pointer">MESE CORRENTE</button>
+        <button onclick="setCashMese('inc',1)"  style="font-size:10px;padding:4px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">MESE PROSSIMO</button>
+        <button onclick="setCashMese('inc',null)" style="font-size:10px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer">TUTTI</button>
         <div class="filtri-spacer"></div>
         <label style="color:var(--green);font-weight:600" id="tot-incassi">€ 0</label>
       </div>
@@ -502,6 +535,9 @@
         <input type="date" id="f-pag-da" oninput="renderAll()" style="color-scheme:dark">
         <label>A:</label>
         <input type="date" id="f-pag-a" oninput="renderAll()" style="color-scheme:dark">
+        <button onclick="setCashMese('pag',0)"  style="font-size:10px;padding:4px 8px;background:var(--accent);border:1px solid var(--accent);color:#fff;border-radius:4px;cursor:pointer">MESE CORRENTE</button>
+        <button onclick="setCashMese('pag',1)"  style="font-size:10px;padding:4px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">MESE PROSSIMO</button>
+        <button onclick="setCashMese('pag',null)" style="font-size:10px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer">TUTTI</button>
         <div class="filtri-spacer"></div>
         <label style="color:var(--red);font-weight:600" id="tot-pagamenti">€ 0</label>
       </div>
@@ -554,8 +590,31 @@
 </div>
 
 <script>
+// ─── TEMA LIGHT/DARK ─────────────────────────────────────
+function toggleTheme() {
+  const isLight = document.documentElement.classList.toggle('light');
+  localStorage.setItem('aec-cash-theme', isLight ? 'light' : 'dark');
+  document.getElementById('theme-toggle').textContent = isLight ? '☀️' : '🌙';
+  // aggiorna color-scheme dei date input
+  document.querySelectorAll('input[type="date"]').forEach(el => {
+    el.style.colorScheme = isLight ? 'light' : 'dark';
+  });
+}
+(function() {
+  const saved = localStorage.getItem('aec-cash-theme');
+  if (saved === 'light') {
+    document.documentElement.classList.add('light');
+    setTimeout(function(){
+      var b = document.getElementById('theme-toggle');
+      if(b) b.textContent = '☀️';
+      document.querySelectorAll('input[type="date"]').forEach(el => { el.style.colorScheme = 'light'; });
+    }, 0);
+  }
+})();
+
 const BASE = '';
 const fmt = n => new Intl.NumberFormat('it-IT', {minimumFractionDigits:2, maximumFractionDigits:2}).format(n);
+const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const today = new Date(); today.setHours(0,0,0,0);
 
 let _data = null;
@@ -566,7 +625,7 @@ async function loadData() {
   try {
     const res = await fetch(`${BASE}/api/cashflow`);
     _data = await res.json();
-    document.getElementById('saldo-input').value = _data.saldo_iniziale || 0;
+    document.getElementById('saldo-input').value = (_data.saldo_iniziale || 0).toFixed(2);
     renderAll();
   } catch(e) {
     document.getElementById('kpis').innerHTML = `<div class="error-box">⚠ Errore caricamento: ${e.message}</div>`;
@@ -614,6 +673,23 @@ async function addVoce() {
 async function deleteVoce(id) {
   await fetch(`${BASE}/api/voce/${id}`, { method:'DELETE' });
   if (_data) { _data.voci_manuali = _data.voci_manuali.filter(v => v.id !== id); renderAll(); }
+}
+
+// ─── FILTRO MESE CASHFLOW ────────────────────────────────
+function setCashMese(tipo, offset) {
+  const daId = tipo === 'inc' ? 'f-inc-da' : 'f-pag-da';
+  const aId  = tipo === 'inc' ? 'f-inc-a'  : 'f-pag-a';
+  if (offset === null) {
+    document.getElementById(daId).value = '';
+    document.getElementById(aId).value  = '';
+  } else {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth() + offset;
+    document.getElementById(daId).value = new Date(y, m, 1).toISOString().slice(0,10);
+    document.getElementById(aId).value  = new Date(y, m+1, 0).toISOString().slice(0,10);
+  }
+  renderAll();
 }
 
 // ─── PARSE DATE ──────────────────────────────────────────
@@ -884,7 +960,7 @@ function renderSaldiBanche() {
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:10px;color:var(--dim)">${VALUTA_ICON[b.valuta]}</span>
             <input class="saldo-edit-input" type="number" step="0.01"
-              id="saldo_${b.id}" value="${b.saldo||0}"
+              id="saldo_${b.id}" value="${(b.saldo||0).toFixed(2)}"
               onchange="markDirty()" oninput="markDirty()">
           </div>
         </div>`;
@@ -895,7 +971,7 @@ function renderSaldiBanche() {
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:10px;color:var(--dim)">${VALUTA_ICON[b.valuta]}</span>
             <input class="saldo-edit-input vincoli" type="number" step="0.01"
-              id="vincoli_${b.id}" value="${b.vincoli||0}"
+              id="vincoli_${b.id}" value="${(b.vincoli||0).toFixed(2)}"
               onchange="markDirty()" oninput="markDirty()">
           </div>
         </div>`;
@@ -1061,6 +1137,8 @@ _opLoaded = true; loadOperazioni(); }
   if (name === 'riba'   && !_ribaLoaded)         { _ribaLoaded = true;     loadRiba(); }
   if (name === 'riba-fornitori' && !_ribaFornLoaded) { _ribaFornLoaded = true; loadRibaFornitori(); }
   if (name === 'wise' && !_wiseLoaded)             { _wiseLoaded = true;   loadWise(); }
+  if (name === 'storico-wise')                     { loadStoricoWise(); }
+  if (name === 'fatture-sdi')                      { if (!_sdiData) loadFattureSdi(); else renderSdi(); }
   if (name === 'operazioni') { if (!_opLoaded) { _opLoaded = true; loadOperazioni(); } else { renderOperazioni(); } }
 }
 
@@ -1363,6 +1441,403 @@ function renderRibaFornitori() {
 }
 
 
+// ─── FATTURE SDI ─────────────────────────────────────────
+let _sdiData = null;
+let _sdiSortNome = false;    // false = nessun sort, true = A→Z, null = Z→A
+let _sdiIbanOverride = {};   // cf → IBAN manuale (sincronizzato col server)
+
+function setSdiMese(offset) {
+  const da = document.getElementById('sdi-da');
+  const a  = document.getElementById('sdi-a');
+  if (offset === null) { da.value = ''; a.value = ''; }
+  else {
+    const now = new Date(), y = now.getFullYear(), m = now.getMonth() + offset;
+    da.value = new Date(y, m, 1).toISOString().slice(0,10);
+    a.value  = new Date(y, m+1, 0).toISOString().slice(0,10);
+  }
+  renderSdi();
+}
+
+async function loadFattureSdi() {
+  document.getElementById('sdi-body').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">⏳ Caricamento fatture...</div>';
+  try {
+    const res = await fetch('/api/fatture-sdi');
+    if (!res.ok) throw new Error('Server: ' + res.status);
+    _sdiData = await res.json();
+    // Ricostruisci override IBAN dai dati server (iban_manuale per cf)
+    _sdiIbanOverride = {};
+    (_sdiData.fatture || []).forEach(f => { if (f.iban_manuale && f.cf) _sdiIbanOverride[f.cf] = f.iban_manuale; });
+    // Default data pagamento = oggi
+    const oggi = new Date().toISOString().slice(0,10);
+    const dp = document.getElementById('sdi-data-pag');
+    if (dp && !dp.value) dp.value = oggi;
+    renderSdi();
+  } catch(e) {
+    document.getElementById('sdi-body').innerHTML = `<div style="padding:20px;color:var(--red)">⚠ Errore: ${esc(e.message)}</div>`;
+  }
+}
+
+async function ricaricaSdi() { _sdiData = null; await loadFattureSdi(); }
+
+function renderSdi() {
+  if (!_sdiData) return;
+  const { fatture } = _sdiData;
+  const fDa   = document.getElementById('sdi-da').value;
+  const fA    = document.getElementById('sdi-a').value;
+  const cerca = (document.getElementById('sdi-cerca').value || '').toLowerCase();
+  const today2 = new Date(); today2.setHours(0,0,0,0);
+
+  let filtered = fatture.filter(f => {
+    if (fDa && f.scadenza < fDa) return false;
+    if (fA  && f.scadenza > fA)  return false;
+    if (cerca && !f.nome.toLowerCase().includes(cerca) && !f.numdoc.toLowerCase().includes(cerca)) return false;
+    return true;
+  });
+
+  // Ordina per fornitore se richiesto
+  if (_sdiSortNome === true)  filtered = [...filtered].sort((a,b) => (a.nome||'').localeCompare(b.nome||'', 'it'));
+  if (_sdiSortNome === null)  filtered = [...filtered].sort((a,b) => (b.nome||'').localeCompare(a.nome||'', 'it'));
+
+  const totFiltrato = filtered.reduce((s, f) => s + f.importo, 0);
+
+  // KPI
+  const kpiTotale = document.getElementById('sdi-kpi-totale');
+  if (kpiTotale) kpiTotale.textContent = '€ ' + fmt(_sdiData.totale);
+  const conIban   = filtered.filter(f => f.addebito_diretto || _sdiIbanOverride[f.cf] || f.iban).length;
+  const senzaIban = filtered.filter(f => !f.addebito_diretto && !_sdiIbanOverride[f.cf] && !f.iban).length;
+  const kpiCon    = document.getElementById('sdi-kpi-con-iban');
+  const kpiSenza  = document.getElementById('sdi-kpi-senza-iban');
+  if (kpiCon)   kpiCon.textContent   = conIban + ' / ' + filtered.length;
+  if (kpiSenza) kpiSenza.textContent = String(senzaIban);
+
+  if (!filtered.length) {
+    document.getElementById('sdi-body').innerHTML = '<div style="padding:40px;text-align:center;color:var(--dim)">📭 Nessuna fattura trovata</div>';
+    return;
+  }
+
+  const sortArrow = _sdiSortNome === true ? ' ↑' : _sdiSortNome === null ? ' ↓' : ' ⇅';
+  let html = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr>
+      <th style="width:32px"><input type="checkbox" id="sdi-chk-all" onchange="selectAllSdi(this.checked)"></th>
+      <th style="cursor:pointer;user-select:none" onclick="toggleSdiSortNome()" title="Ordina per fornitore">Fornitore<span style="color:var(--accent);font-size:11px">${sortArrow}</span></th>
+      <th>N. Fattura</th>
+      <th>Rata</th>
+      <th>Data</th>
+      <th>Scadenza</th>
+      <th>IBAN</th>
+      <th>Riferimento</th>
+      <th style="text-align:right">Importo</th>
+    </tr></thead><tbody>`;
+
+  filtered.forEach(f => {
+    const scad = f.scadenza ? new Date(f.scadenza) : null;
+    const isScad = scad && scad < today2;
+    const ibanEff = _sdiIbanOverride[f.cf] || f.iban || '';
+    const cfSafe  = esc(f.cf || '');
+    const ibanCell = f.addebito_diretto
+      ? `<span style="font-size:10px;color:var(--muted);font-weight:600">⚡ Addebito Diretto</span>`
+      : ibanEff
+        ? `<span style="color:${f.iban_manuale || _sdiIbanOverride[f.cf] ? 'var(--cyan)' : 'var(--green)'};font-family:'DM Mono',monospace;font-size:10px">${ibanEff}${f.iban_manuale || _sdiIbanOverride[f.cf] ? '<span style="font-size:9px;color:var(--cyan);margin-left:4px">✎</span>' : ''}</span>`
+        : `<div style="display:flex;gap:4px;align-items:center">
+             <input type="text" placeholder="IBAN manuale" id="sdi-iban-${cfSafe}"
+               style="background:var(--bg);border:1px solid var(--orange);color:var(--text);padding:3px 6px;border-radius:4px;font-size:10px;font-family:'DM Mono',monospace;width:200px"
+               oninput="setSdiIban('${cfSafe}', this.value)">
+             <span style="font-size:10px;color:var(--orange)">⚠</span>
+           </div>`;
+    html += `<tr data-id="${esc(f.id)}">
+      <td style="text-align:center;padding:8px 6px">
+        <input type="checkbox" class="sdi-chk-row" data-id="${esc(f.id)}" data-importo="${f.importo}" onchange="aggiornaSelTotaleSdi()">
+      </td>
+      <td style="font-size:12px;font-weight:500">${esc(f.nome)}</td>
+      <td style="font-size:11px;color:var(--muted)">${esc(f.numdoc)}</td>
+      <td style="font-size:11px;color:var(--cyan);text-align:center">${f.rata_n ? `<span style="background:rgba(8,145,178,.15);border-radius:4px;padding:2px 6px">${f.rata_n}</span>` : ''}</td>
+      <td class="mono" style="font-size:12px">${f.data_doc || '—'}</td>
+      <td style="font-size:12px">
+        <input type="date" value="${f.scadenza || ''}"
+          style="background:${f.scadenza_manual ? 'rgba(8,145,178,.1)' : 'transparent'};border:1px solid ${isScad ? 'var(--red)' : f.scadenza_manual ? 'var(--cyan)' : 'var(--border)'};color:${isScad ? 'var(--red)' : 'var(--text)'};border-radius:4px;padding:3px 6px;font-size:11px;color-scheme:dark"
+          onchange="setSdiScadenza('${esc(f.id)}', this.value, this)">
+        ${isScad ? '<span style="color:var(--red);font-size:10px;margin-left:4px">⚠ scaduta</span>' : ''}
+      </td>
+      <td style="font-size:11px;padding:6px 8px">${ibanCell}</td>
+      <td style="padding:6px 8px">
+        <input type="text" value="${esc(f.note || '')}" placeholder="note / rif..."
+          style="background:transparent;border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:4px;font-size:11px;width:150px"
+          onchange="setSdiNote('${esc(f.id)}', this.value, this)">
+      </td>
+      <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">- € ${fmt(f.importo)}</td>
+    </tr>`;
+  });
+
+  html += `<tr style="border-top:2px solid var(--border);font-weight:700">
+    <td colspan="8">TOTALE FILTRATO</td>
+    <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace">- € ${fmt(totFiltrato)}</td>
+  </tr>`;
+  html += `</tbody></table>`;
+  document.getElementById('sdi-body').innerHTML = html;
+  aggiornaSelTotaleSdi();
+}
+
+function toggleSdiSortNome() {
+  // false → true (A→Z) → null (Z→A) → false (nessun sort)
+  if (_sdiSortNome === false) _sdiSortNome = true;
+  else if (_sdiSortNome === true) _sdiSortNome = null;
+  else _sdiSortNome = false;
+  renderSdi();
+}
+
+function selectAllSdi(checked) {
+  document.querySelectorAll('.sdi-chk-row').forEach(c => c.checked = checked);
+  aggiornaSelTotaleSdi();
+}
+
+function aggiornaSelTotaleSdi() {
+  const sel = [...document.querySelectorAll('.sdi-chk-row:checked')];
+  const tot = sel.reduce((s, c) => s + parseFloat(c.dataset.importo || 0), 0);
+  const el = document.getElementById('sdi-sel-count');
+  if (el) el.textContent = sel.length ? `${sel.length} selezionate · - € ${fmt(tot)}` : 'Nessuna selezione';
+  const kpiSel = document.getElementById('sdi-kpi-sel');
+  if (kpiSel) kpiSel.textContent = '€ ' + fmt(tot);
+}
+
+async function setSdiScadenza(id, val, input) {
+  try {
+    await fetch('/api/fatture-sdi/set-scadenza', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id, scadenza: val || null }) });
+    if (_sdiData) { const f = _sdiData.fatture.find(x => x.id === id); if (f) { f.scadenza = val; f.scadenza_manual = !!val; } }
+    input.style.background = val ? 'rgba(8,145,178,.1)' : 'transparent';
+    input.style.borderColor = val ? 'var(--cyan)' : 'var(--border)';
+  } catch(e) { console.error(e); }
+}
+
+async function setSdiNote(id, val, input) {
+  try {
+    await fetch('/api/fatture-sdi/set-note', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id, note: val || '' }) });
+    if (_sdiData) { const f = _sdiData.fatture.find(x => x.id === id); if (f) f.note = val; }
+    if (input) { input.style.borderColor = val ? 'var(--cyan)' : 'var(--border)'; }
+  } catch(e) { console.error(e); }
+}
+
+async function setSdiIban(cf, val) {
+  const clean = val.replace(/\s/g,'').toUpperCase();
+  if (clean.length >= 15) {
+    _sdiIbanOverride[cf] = clean;
+    await fetch('/api/fatture-sdi/set-iban', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ cf, iban: clean }) });
+    // Aggiorna visivamente tutte le righe con lo stesso cf
+    renderSdi();
+  } else if (!clean.length) {
+    delete _sdiIbanOverride[cf];
+    await fetch('/api/fatture-sdi/set-iban', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ cf, iban: '' }) });
+  }
+}
+
+function exportSdiWiseCSV() {
+  if (!_sdiData) return;
+  const sel = [...document.querySelectorAll('.sdi-chk-row:checked')];
+  if (!sel.length) { alert('Seleziona almeno una fattura.'); return; }
+
+  const ids = new Set(sel.map(c => c.dataset.id));
+  const fatture = _sdiData.fatture.filter(f => ids.has(f.id));
+
+  const rows = [['name','recipientEmail','paymentReference','receiverType','amountCurrency','amount','sourceCurrency','targetCurrency','IBAN']];
+  const senzaIban = [];
+
+  fatture.forEach(f => {
+    if (f.addebito_diretto) return; // salta: pagato automaticamente dalla banca
+    const ibanEff = _sdiIbanOverride[f.cf] || f.iban || '';
+    if (!ibanEff) senzaIban.push(f.nome);
+    const rif = (f.note && f.note.trim()) ? f.note.trim() : (f.numdoc || 'Pagamento fattura');
+    rows.push([f.nome, '', rif, 'INSTITUTION', 'EUR', f.importo.toFixed(2), 'EUR', 'EUR', ibanEff]);
+  });
+
+  if (senzaIban.length) {
+    if (!confirm(`⚠ ${senzaIban.length} fornitore/i senza IBAN:\n${senzaIban.join('\n')}\n\nScaricare comunque il CSV?`)) return;
+  }
+
+  const csv = '\uFEFF' + rows.map(row => row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `Wise_SDI_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function segnaSdiPagate() {
+  const sel = [...document.querySelectorAll('.sdi-chk-row:checked')];
+  if (!sel.length) return alert('Seleziona almeno una fattura.');
+  const dataPag = document.getElementById('sdi-data-pag').value;
+  if (!dataPag) return alert('Inserisci la data di pagamento.');
+  const ids = sel.map(c => c.dataset.id);
+  const fatture_dettaglio = ids.map(id => _sdiData.fatture.find(f => f.id === id)).filter(Boolean).map(f => ({ id: f.id, nome: f.nome, importo: f.importo, numdoc: f.numdoc, data_doc: f.data_doc }));
+  const tot = fatture_dettaglio.reduce((s, f) => s + f.importo, 0);
+  if (!confirm(`Segni come pagate ${ids.length} fatture per - € ${fmt(tot)} in data ${dataPag}?`)) return;
+  try {
+    const r = await fetch('/api/fatture-sdi/segna-pagate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ids, data_pagamento: dataPag, fatture_dettaglio }) });
+    const j = await r.json();
+    if (j.ok) { alert(`✓ ${j.aggiornati} fatture segnate come pagate.`); await ricaricaSdi(); }
+    else alert('Errore: ' + (j.error || 'sconosciuto'));
+  } catch(e) { alert('Errore: ' + e.message); }
+}
+
+// ─── STORICO PAGAMENTI ───────────────────────────────────
+let _storicoData = null; // cache dei batch caricati
+
+async function loadStoricoWise() {
+  const el = document.getElementById('wise-storico-body');
+  if (!el) return;
+  el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">⏳ Caricamento storico...</div>';
+  _storicoData = null;
+
+  try {
+    const [resWise, resSdi] = await Promise.all([
+      fetch('/api/wise/storico').catch(() => null),
+      fetch('/api/fatture-sdi/storico').catch(() => null)
+    ]);
+    const wiseStorico = resWise && resWise.ok ? ((await resWise.json()).storico || []).map(b => ({...b, _tipo:'wise'})) : [];
+    const sdiStorico  = resSdi  && resSdi.ok  ? ((await resSdi.json()).storico  || []).map(b => ({...b, _tipo:'sdi'}))  : [];
+
+    _storicoData = [...wiseStorico, ...sdiStorico]
+      .sort((a,b) => (b.data_pagamento||'').localeCompare(a.data_pagamento||'') || (b.saldato_il||'').localeCompare(a.saldato_il||''));
+
+    renderStorico();
+  } catch(e) {
+    el.innerHTML = `<div style="padding:20px;color:var(--red)">⚠ Errore caricamento storico: ${esc(e.message)}<br><small>Assicurati che il server sia aggiornato e riavviato.</small></div>`;
+  }
+}
+
+function renderStorico() {
+  const el = document.getElementById('wise-storico-body');
+  if (!el) return;
+  if (!_storicoData) return;
+
+  const cerca = (document.getElementById('storico-cerca')?.value || '').toLowerCase().trim();
+  const totEl = document.getElementById('storico-wise-totale');
+
+  // Filtra: un batch è visibile se almeno un pagamento matcha il cerca
+  const filtrati = !cerca ? _storicoData : _storicoData.map(batch => {
+    const pagFiltrati = batch.pagamenti.filter(p => (p.nome||'').toLowerCase().includes(cerca));
+    return pagFiltrati.length ? {...batch, pagamenti: pagFiltrati} : null;
+  }).filter(Boolean);
+
+  if (!filtrati.length) {
+    el.innerHTML = cerca
+      ? `<div style="padding:40px;text-align:center;color:var(--dim)">🔍 Nessun risultato per "<strong>${esc(cerca)}</strong>"</div>`
+      : '<div style="padding:40px;text-align:center;color:var(--dim)">📭 Nessun pagamento registrato ancora</div>';
+    if (totEl) totEl.textContent = '';
+    return;
+  }
+
+  const totaleGlobale = _storicoData.reduce((s, b) => s + (b.totale || b.pagamenti.reduce((x,p) => x+(p.importo||0), 0)), 0);
+  const nBatch = _storicoData.length;
+  if (totEl) totEl.textContent = cerca
+    ? `${filtrati.length} / ${nBatch} batch · Totale: - € ${fmt(totaleGlobale)}`
+    : `${nBatch} batch · Totale: - € ${fmt(totaleGlobale)}`;
+
+  let html = '';
+  filtrati.forEach(batch => {
+    const dataPag   = batch.data_pagamento;
+    const saldatoIl = new Date(batch.saldato_il).toLocaleString('it-IT');
+    const totale    = batch.totale || batch.pagamenti.reduce((s,p) => s + (p.importo||0), 0);
+    const nPag      = batch.pagamenti.length;
+    const isSDI     = batch._tipo === 'sdi';
+    const icona     = isSDI ? '📄 Fatture SDI' : '🏦 Wise';
+    const iconaColor = isSDI ? 'var(--cyan)' : 'var(--accent)';
+
+    // Se filtriamo, ricalcola il totale sui soli pagamenti visibili
+    const totaleFiltrato = cerca
+      ? batch.pagamenti.reduce((s,p) => s + (p.importo||0), 0)
+      : totale;
+
+    html += `<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:14px;overflow:hidden">
+      <div style="background:var(--panel2);padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <span style="font-weight:700;color:${iconaColor};font-size:14px">${icona} · Pagamento del ${dataPag}</span>
+        <span style="font-size:11px;color:var(--muted)">${nPag} fornitore${nPag!==1?'i':''} · Registrato ${saldatoIl}</span>
+        <span style="margin-left:auto;font-weight:700;color:var(--red);font-size:15px;font-family:'DM Mono',monospace">- € ${fmt(totaleFiltrato)}</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">`;
+
+    if (isSDI) {
+      const nCols = 3;
+      html += `<thead><tr style="background:var(--panel3)">
+          <th style="padding:7px 12px;text-align:left;font-weight:600">Fornitore</th>
+          <th style="padding:7px 12px;text-align:left;font-weight:600">N. Fattura</th>
+          <th style="padding:7px 12px;text-align:left;font-weight:600">Data Fattura</th>
+          <th style="padding:7px 12px;text-align:right;font-weight:600">Importo</th>
+        </tr></thead><tbody>`;
+      batch.pagamenti.forEach(p => {
+        html += `<tr style="border-top:1px solid var(--border)">
+          <td style="padding:7px 12px;font-weight:500">${esc(p.nome || '—')}</td>
+          <td style="padding:7px 12px;color:var(--muted);font-size:11px">${esc(p.numdoc || '—')}</td>
+          <td style="padding:7px 12px;color:var(--muted)">${p.data_doc || '—'}</td>
+          <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:var(--red)">- € ${fmt(p.importo||0)}</td>
+        </tr>`;
+      });
+      html += `<tr style="border-top:2px solid var(--border);background:var(--panel2)">
+        <td colspan="${nCols}" style="padding:7px 12px;font-weight:600;font-size:11px;color:var(--muted)">TOTALE</td>
+        <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:700;color:var(--red)">- € ${fmt(totaleFiltrato)}</td>
+      </tr>`;
+    } else {
+      const nCols = 4;
+      html += `<thead><tr style="background:var(--panel3)">
+          <th style="padding:7px 12px;text-align:left;font-weight:600">Fornitore</th>
+          <th style="padding:7px 12px;text-align:left;font-weight:600">Rata</th>
+          <th style="padding:7px 12px;text-align:left;font-weight:600">Scadenza orig.</th>
+          <th style="padding:7px 12px;text-align:left;font-weight:600">Riferimento</th>
+          <th style="padding:7px 12px;text-align:right;font-weight:600">Importo</th>
+        </tr></thead><tbody>`;
+      batch.pagamenti.forEach(p => {
+        html += `<tr style="border-top:1px solid var(--border)">
+          <td style="padding:7px 12px;font-weight:500">${esc(p.nome || '—')}</td>
+          <td style="padding:7px 12px;color:var(--muted)">${esc(p.rata || '—')}</td>
+          <td style="padding:7px 12px;color:var(--muted)">${p.data_scad || '—'}</td>
+          <td style="padding:7px 12px;color:var(--dim);font-size:11px">${esc(p.rif || '—')}</td>
+          <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:var(--red)">- € ${fmt(p.importo||0)}</td>
+        </tr>`;
+      });
+      html += `<tr style="border-top:2px solid var(--border);background:var(--panel2)">
+        <td colspan="${nCols}" style="padding:7px 12px;font-weight:600;font-size:11px;color:var(--muted)">TOTALE</td>
+        <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:700;color:var(--red)">- € ${fmt(totaleFiltrato)}</td>
+      </tr>`;
+    }
+
+    html += `</tbody></table>
+      <div style="padding:10px 14px;border-top:1px solid var(--border);background:var(--panel2);display:flex;align-items:center;gap:10px">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">💬 Commento:</span>
+        <input type="text" value="${esc(batch.commento || '')}" placeholder="Aggiungi un appunto su questo pagamento..."
+          style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:6px;font-size:12px"
+          onchange="salvaCommentoStorico('${esc(batch.batch_id)}', this.value, this)">
+      </div>
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+
+async function salvaCommentoStorico(batch_id, val, input) {
+  try {
+    await fetch('/api/storico/set-commento', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ batch_id, commento: val }) });
+    input.style.borderColor = val.trim() ? 'var(--cyan)' : 'var(--border)';
+  } catch(e) { console.error(e); }
+}
+
+// ─── WISE: FILTRO MESE ───────────────────────────────────
+function setWiseMese(offset) {
+  const da = document.getElementById('we-da');
+  const a  = document.getElementById('we-a');
+  if (offset === null) {
+    da.value = '';
+    a.value = '';
+  } else {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth() + offset;
+    const primo  = new Date(y, m, 1);
+    const ultimo = new Date(y, m + 1, 0);
+    da.value = primo.toISOString().slice(0,10);
+    a.value  = ultimo.toISOString().slice(0,10);
+  }
+  renderWise();
+}
+
 // ─── WISE EXPORT ─────────────────────────────────────────
 let _wiseData = null;
 let _wiseIbanOverride = {}; // IBAN inseriti manualmente per IDAnagr
@@ -1392,6 +1867,7 @@ function renderWise() {
   const fA        = document.getElementById('we-a').value;
   const soloIban  = document.getElementById('we-solo-iban').checked;
   const soloItalia = document.getElementById('we-solo-italia').checked;
+  const cerca     = (document.getElementById('we-cerca').value || '').toLowerCase().trim();
 
   // Filtra
   let filtered = righe.filter(r => {
@@ -1400,13 +1876,15 @@ function renderWise() {
     const ibanEff = _wiseIbanOverride[r.id_anagr] || r.iban;
     if (soloIban && !ibanEff) return false;
     if (soloItalia && r.nazione && r.nazione !== '' && r.nazione.toLowerCase() !== 'italia') return false;
+    if (cerca && !r.nome.toLowerCase().includes(cerca)) return false;
     return true;
   });
 
   // KPI
   document.getElementById('we-totale').textContent     = '€ ' + fmt(totale);
+  const italiani = righe.filter(r => !r.estero);
   document.getElementById('we-con-iban').textContent   = righe.filter(r => r.iban_ok).length + ' / ' + righe.length;
-  document.getElementById('we-senza-iban').textContent = senzaIban;
+  document.getElementById('we-senza-iban').textContent = italiani.filter(r => !r.iban && !r.iban_ok).length;
   aggiornaSelTotale();
 
   if (!filtered.length) {
@@ -1422,13 +1900,14 @@ function renderWise() {
       <th>Scadenza</th>
       <th>Rate</th>
       <th>IBAN</th>
-      <th>Email</th>
+      <th>Riferimenti</th>
       <th style="text-align:right">Importo</th>
     </tr></thead><tbody>`;
 
   filtered.forEach(r => {
     const ibanEff = _wiseIbanOverride[r.id_anagr] || r.iban;
-    const ibanOk  = !!ibanEff;
+    const isEstero = r.estero || (r.nazione && r.nazione !== '' && r.nazione.toLowerCase() !== 'italia');
+    const ibanOk  = !!ibanEff || isEstero;
     const scad    = r.data_scad ? new Date(r.data_scad) : null;
     const isScad  = scad && scad < today2;
     const chkId   = `we-chk-${r.id_anagr}_${r.data_scad}`;
@@ -1446,22 +1925,26 @@ function renderWise() {
       <td class="mono" style="font-size:12px">${r.data_fmt || '—'}${isScad ? ' <span class="scaduta">⚠</span>' : ''}</td>
       <td style="font-size:11px;color:var(--muted)">${r.rate && r.rate.length ? r.rate.join(', ') : '—'}</td>
       <td style="font-size:11px">
-        ${ibanOk
+        ${r.addebito_diretto
+          ? `<span style="font-size:10px;color:var(--muted);font-weight:600">⚡ Addebito Diretto</span>`
+          : ibanEff
           ? `<span style="color:${r.iban_manuale ? 'var(--cyan)' : 'var(--green)'};font-family:'DM Mono',monospace">
                ${ibanEff}
                ${r.iban_manuale ? '<span style="font-size:9px;color:var(--cyan);margin-left:4px">✎ manuale</span>' : ''}
              </span>`
-          : `<div style="display:flex;gap:6px;align-items:center">
-               <input type="text" placeholder="Inserisci IBAN manualmente"
-                 id="iban-input-${r.id_anagr}"
-                 style="background:var(--bg);border:1px solid var(--orange);color:var(--text);padding:4px 8px;border-radius:5px;font-size:11px;font-family:'DM Mono',monospace;width:220px"
-                 oninput="salvaIbanManuale(${r.id_anagr}, this.value)">
-               <span style="font-size:10px;color:var(--orange)">⚠ mancante</span>
-             </div>`
+          : isEstero
+            ? `<span style="font-size:10px;color:var(--cyan)">🌍 Estero — IBAN non richiesto</span>`
+            : `<div style="display:flex;gap:6px;align-items:center">
+                 <input type="text" placeholder="Inserisci IBAN manualmente"
+                   id="iban-input-${r.id_anagr}"
+                   style="background:var(--bg);border:1px solid var(--orange);color:var(--text);padding:4px 8px;border-radius:5px;font-size:11px;font-family:'DM Mono',monospace;width:220px"
+                   oninput="salvaIbanManuale(${r.id_anagr}, this.value)">
+                 <span style="font-size:10px;color:var(--orange)">⚠ mancante</span>
+               </div>`
         }
-        ${r.coord_raw && !ibanOk ? `<div style="font-size:9px;color:var(--dim);margin-top:2px">${r.coord_raw}</div>` : ''}
+        ${r.coord_raw && !ibanEff && !isEstero ? `<div style="font-size:9px;color:var(--dim);margin-top:2px">${r.coord_raw}</div>` : ''}
       </td>
-      <td style="font-size:11px;color:var(--muted)">${r.email || '—'}</td>
+      <td style="font-size:11px;color:var(--dim)">${r.rif || '—'}</td>
       <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">- € ${fmt(r.importo)}</td>
     </tr>`;
   });
@@ -1716,7 +2199,7 @@ Data pagamento (YYYY-MM-DD):`,
   );
   if (!dataPag) return;
 
-  if (!confirm(`Conferma: aggiornare ${allIds.length} scadenze in Danea con Saldato=1 e DataPagam=${dataPag}?\n\nQuesta operazione NON è reversibile dall'interfaccia.`)) return;
+  if (!confirm(`Conferma: segna ${allIds.length} scadenze come PAGATE?\n\nData pagamento: ${dataPag}\n\nI pagamenti spariscono subito dall'elenco AEC Cash.`)) return;
 
   try {
     const res = await fetch('/api/wise/segna-pagati', {
@@ -1726,8 +2209,7 @@ Data pagamento (YYYY-MM-DD):`,
     });
     const r = await res.json();
     if (r.ok) {
-      alert(`✓ ${r.aggiornati} scadenze aggiornate in Danea come pagate.`);
-      // Ricarica i dati
+      alert(`✓ ${r.aggiornati} pagamenti segnati come pagati.\n\nTracking AEC Cash: ${r.tracking_locale}\nDanea: ${r.danea_db}`);
       _wiseLoaded = false;
       await loadWise();
     } else {
@@ -1956,7 +2438,13 @@ _opLoaded = true; loadOperazioni();
       <input type="date" id="we-da" oninput="renderWise()" style="color-scheme:dark">
       <label>a:</label>
       <input type="date" id="we-a" oninput="renderWise()" style="color-scheme:dark">
+      <button onclick="setWiseMese(-1)" style="font-size:10px;padding:4px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">MESE SCORSO</button>
+      <button onclick="setWiseMese(0)" style="font-size:10px;padding:4px 8px;background:var(--accent);border:1px solid var(--accent);color:#fff;border-radius:4px;cursor:pointer">MESE CORRENTE</button>
+      <button onclick="setWiseMese(1)" style="font-size:10px;padding:4px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">MESE PROSSIMO</button>
+      <button onclick="setWiseMese(null)" style="font-size:10px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer">TUTTI</button>
       <div class="filtri-spacer"></div>
+      <input type="text" id="we-cerca" oninput="renderWise()" placeholder="🔍 Cerca fornitore..."
+        style="padding:4px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;width:200px">
       <label style="font-size:11px;color:var(--muted)">
         <input type="checkbox" id="we-solo-iban" onchange="renderWise()" style="margin-right:4px">
         Solo con IBAN
@@ -1974,6 +2462,84 @@ _opLoaded = true; loadOperazioni();
 
 </div>
 </div><!-- end tab-wise -->
+
+<!-- TAB: STORICO WISE -->
+<div id="tab-storico-wise" class="tab-content">
+<div class="main">
+  <div class="card">
+    <div class="card-header">
+      📋 Storico Pagamenti
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <span id="storico-wise-totale" style="font-size:12px;color:var(--muted)"></span>
+        <button class="btn-add" onclick="loadStoricoWise()" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">🔄 Aggiorna</button>
+      </div>
+    </div>
+    <!-- Filtro ricerca fornitore -->
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border)">
+      <input type="text" id="storico-cerca" oninput="renderStorico()" placeholder="🔍 Cerca fornitore..."
+        style="width:100%;max-width:340px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:12px">
+    </div>
+    <div id="wise-storico-body" style="padding:16px;min-height:200px">
+      <div style="color:var(--muted);font-size:12px;text-align:center;padding:40px">Apri questo tab per caricare lo storico</div>
+    </div>
+  </div>
+</div>
+</div><!-- end tab-storico-wise -->
+
+<!-- TAB: FATTURE SDI -->
+<div id="tab-fatture-sdi" class="tab-content">
+<div class="main">
+
+  <!-- KPI bar -->
+  <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+    <div class="kpi"><div class="kpi-label">Totale da Pagare</div><div class="kpi-val red" id="sdi-kpi-totale">—</div></div>
+    <div class="kpi"><div class="kpi-label">Selezionati</div><div class="kpi-val blue" id="sdi-kpi-sel">€ 0,00</div></div>
+    <div class="kpi"><div class="kpi-label">Con IBAN</div><div class="kpi-val green" id="sdi-kpi-con-iban">—</div></div>
+    <div class="kpi"><div class="kpi-label">Senza IBAN</div><div class="kpi-val orange" id="sdi-kpi-senza-iban">—</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      💸 Fatture da Pagare
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn-add" onclick="ricaricaSdi()" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">🔄 Aggiorna</button>
+        <button class="btn-add" onclick="selectAllSdi(true)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Seleziona tutti</button>
+        <button class="btn-add" onclick="selectAllSdi(false)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Deseleziona</button>
+        <button class="btn-add" onclick="exportSdiWiseCSV()" style="background:#2d6a4f;border:1px solid #40916c">⬇ Scarica CSV Wise</button>
+        <button class="btn-add" onclick="segnaSdiPagate()" style="background:#166534;border:1px solid #16a34a">✓ Segna come Pagate</button>
+      </div>
+    </div>
+
+    <!-- Filtri -->
+    <div style="padding:12px 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border)">
+      <label style="font-size:11px;color:var(--muted)">Scadenza da</label>
+      <input type="date" id="sdi-da" oninput="renderSdi()" style="color-scheme:dark">
+      <label style="font-size:11px;color:var(--muted)">a</label>
+      <input type="date" id="sdi-a" oninput="renderSdi()" style="color-scheme:dark">
+      <button onclick="setSdiMese(-1)" style="font-size:10px;padding:4px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">MESE SCORSO</button>
+      <button onclick="setSdiMese(0)"  style="font-size:10px;padding:4px 8px;background:var(--accent);border:1px solid var(--accent);color:#fff;border-radius:4px;cursor:pointer">MESE CORRENTE</button>
+      <button onclick="setSdiMese(1)"  style="font-size:10px;padding:4px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">MESE PROSSIMO</button>
+      <button onclick="setSdiMese(null)" style="font-size:10px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer">TUTTI</button>
+      <div style="flex:1;min-width:160px">
+        <input type="text" id="sdi-cerca" oninput="renderSdi()" placeholder="🔍 Cerca fornitore..."
+          style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:6px;font-size:12px">
+      </div>
+    </div>
+
+    <!-- Azioni selezione -->
+    <div style="padding:8px 16px;display:flex;gap:10px;align-items:center;border-bottom:1px solid var(--border);flex-wrap:wrap;background:var(--panel2)">
+      <span id="sdi-sel-count" style="font-size:12px;color:var(--muted)">Nessuna selezione</span>
+      <label style="font-size:11px;color:var(--muted);margin-left:8px">Data pagamento:</label>
+      <input type="date" id="sdi-data-pag" style="color-scheme:dark;font-size:12px">
+    </div>
+
+    <!-- Tabella -->
+    <div style="overflow-x:auto" id="sdi-body" style="min-height:200px">
+      <div style="color:var(--muted);font-size:12px;text-align:center;padding:40px">Apri questo tab per caricare le fatture</div>
+    </div>
+  </div>
+</div>
+</div><!-- end tab-fatture-sdi -->
 
 <!-- TAB: RID AUTOMATICI -->
 <div id="tab-rid" class="tab-content">
@@ -2060,6 +2626,222 @@ _opLoaded = true; loadOperazioni();
 
 </div>
 </div><!-- end tab-rid -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!--  TAB F24                                                                -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div id="tab-f24" class="tab-content">
+<div class="main">
+
+  <!-- Upload + controlli -->
+  <div class="card">
+    <div class="card-header">📄 F24 Telematico — Genera file Entratel</div>
+    <div style="padding:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div id="f24-dropzone"
+        style="border:2px dashed var(--border);border-radius:8px;padding:18px 28px;cursor:pointer;text-align:center;min-width:200px;transition:.2s"
+        onclick="document.getElementById('f24-file').click()"
+        ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+        ondragleave="this.style.borderColor='var(--border)'"
+        ondrop="event.preventDefault();this.style.borderColor='var(--border)';f24LoadPdf(event.dataTransfer.files[0])">
+        <div style="font-size:26px;margin-bottom:6px">📁</div>
+        <div style="color:var(--muted);font-size:12px">Trascina il PDF F24<br>o clicca per selezionare</div>
+      </div>
+      <input type="file" id="f24-file" accept=".pdf" style="display:none" onchange="f24LoadPdf(this.files[0])">
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:5px">Data Versamento <span style="color:var(--dim)">(GGMMAAAA)</span></div>
+        <input id="f24-dv" type="text" placeholder="16032026" maxlength="8"
+          style="width:130px;padding:7px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'DM Mono',monospace;font-size:14px"
+          oninput="f24S.dataVersamento=this.value">
+      </div>
+      <div style="margin-left:auto;display:flex;gap:12px;align-items:center">
+        <div id="f24-saldo" style="font-family:'DM Mono',monospace;font-size:14px;font-weight:600"></div>
+        <button onclick="f24Genera()"
+          style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer">
+          ⬇ Genera .txt
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ERARIO -->
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <span>SEZIONE ERARIO</span>
+      <button onclick="f24AddRow('erario')" style="font-size:12px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">+ Riga</button>
+    </div>
+    <div id="f24-t-erario" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- INPS -->
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <span>SEZIONE INPS</span>
+      <button onclick="f24AddRow('inps')" style="font-size:12px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">+ Riga</button>
+    </div>
+    <div id="f24-t-inps" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- REGIONI -->
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <span>SEZIONE REGIONI</span>
+      <button onclick="f24AddRow('regioni')" style="font-size:12px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">+ Riga</button>
+    </div>
+    <div id="f24-t-regioni" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- IMU -->
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <span>SEZIONE IMU E ALTRI TRIBUTI LOCALI</span>
+      <button onclick="f24AddRow('imu')" style="font-size:12px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">+ Riga</button>
+    </div>
+    <div id="f24-t-imu" style="overflow-x:auto"></div>
+  </div>
+
+</div>
+</div><!-- end tab-f24 -->
+
+<script>
+// ── F24 state ────────────────────────────────────────────────────────────────
+const f24S = { dataVersamento:'', erario:[], inps:[], regioni:[], imu:[] };
+
+const F24_DEF = {
+  erario:  { cols:['Cod.Tributo','Rata/Prov','Anno','Importo Deb','Importo Cred'],       ws:['90px','80px','70px','130px','130px'],   def:()=>['','','','',''] },
+  inps:    { cols:['Sede','Causale','Matricola/Cod.INPS','Periodo Da','Periodo A','Importo Deb','Importo Cred'], ws:['60px','65px','160px','90px','90px','120px','120px'], def:()=>['','','','','','',''] },
+  regioni: { cols:['Cod.Reg','Tributo','Rateaz','Anno','Importo Deb','Importo Cred'],     ws:['60px','70px','70px','70px','130px','130px'], def:()=>['','','','','',''] },
+  imu:     { cols:['Comune','N.Imm','Acc','Saldo','Var','Ravv','Detraz','Cod.Trib','Rata','Anno','Importo Deb','Importo Cred'], ws:['62px','48px','35px','40px','35px','40px','80px','70px','60px','60px','120px','120px'], def:()=>['',0,'0','0','0','0','0,00','','','','',''] }
+};
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function f24Render() {
+  for (const sec of ['erario','inps','regioni','imu']) f24RenderTable(sec);
+  f24UpdateSaldo();
+}
+
+function f24RenderTable(sec) {
+  const {cols,ws} = F24_DEF[sec];
+  const rows = f24S[sec];
+  const inp = (ri,ci,v) =>
+    `<input type="text" value="${String(v).replace(/"/g,'&quot;')}"
+      style="width:100%;padding:4px 6px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;font-family:'DM Mono',monospace"
+      oninput="f24S.${sec}[${ri}][${ci}]=this.value;f24UpdateSaldo()">`;
+
+  let h = `<table style="width:100%;border-collapse:collapse"><thead><tr>`;
+  cols.forEach((c,i) => h += `<th style="padding:5px 6px;font-size:11px;color:var(--muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;width:${ws[i]}">${c}</th>`);
+  h += `<th style="width:28px"></th></tr></thead><tbody>`;
+
+  rows.forEach((row,ri) => {
+    h += '<tr>';
+    row.forEach((v,ci) => h += `<td style="padding:2px 3px">${inp(ri,ci,v)}</td>`);
+    h += `<td style="padding:2px 3px;text-align:center">
+      <button onclick="f24RemRow('${sec}',${ri})"
+        style="background:rgba(239,68,68,.15);border:none;border-radius:4px;color:var(--red);cursor:pointer;padding:1px 6px;font-size:12px">✕</button></td></tr>`;
+  });
+  h += '</tbody></table>';
+  document.getElementById(`f24-t-${sec}`).innerHTML = h;
+}
+
+function f24AddRow(sec) { f24S[sec].push(F24_DEF[sec].def()); f24RenderTable(sec); f24UpdateSaldo(); }
+function f24RemRow(sec,ri) { f24S[sec].splice(ri,1); f24RenderTable(sec); f24UpdateSaldo(); }
+
+function f24UpdateSaldo() {
+  const toC = s => { s=String(s||'').trim(); if(!s)return 0; return parseInt(s.replace(/\./g,'').replace(',',''))||0; };
+  const debIdx = { erario:3, inps:5, regioni:4, imu:10 };
+  let deb=0, cred=0;
+  for (const sec of ['erario','inps','regioni','imu']) {
+    const di=debIdx[sec];
+    f24S[sec].forEach(r=>{ deb+=toC(r[di]); cred+=toC(r[di+1]); });
+  }
+  const saldo=(deb-cred)/100;
+  const el=document.getElementById('f24-saldo');
+  el.textContent = 'Saldo: € '+saldo.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
+  el.style.color = saldo>=0?'var(--green)':'var(--red)';
+}
+
+// ── PDF parse ─────────────────────────────────────────────────────────────────
+async function f24LoadPdf(file) {
+  if (!file) return;
+  const dz = document.getElementById('f24-dropzone');
+  dz.innerHTML = '<div style="color:var(--orange);font-size:13px">⏳ Lettura PDF...</div>';
+  try {
+    if (!window.pdfjsLib) throw new Error('PDF.js non disponibile');
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+    let text = '';
+    for (let pg=1; pg<=pdf.numPages; pg++) {
+      const page = await pdf.getPage(pg);
+      const content = await page.getTextContent();
+      // Group items by Y coordinate, sort within line by X
+      const lineMap = new Map();
+      for (const item of content.items) {
+        if (!item.str.trim()) continue;
+        const y = Math.round(item.transform[5]);
+        if (!lineMap.has(y)) lineMap.set(y,[]);
+        lineMap.get(y).push({x:item.transform[4], s:item.str});
+      }
+      const lines = [...lineMap.entries()]
+        .sort((a,b)=>b[0]-a[0])
+        .map(([,it])=>it.sort((a,b)=>a.x-b.x).map(i=>i.s).join(' '));
+      text += lines.join('\n')+'\n';
+    }
+
+    const parsed = f24ParseText(text);
+    Object.assign(f24S, parsed);
+    if (parsed.dataVersamento) document.getElementById('f24-dv').value = parsed.dataVersamento;
+    f24Render();
+
+    const imuN=parsed.imu.length, erN=parsed.erario.length, inN=parsed.inps.length, rgN=parsed.regioni.length;
+    dz.innerHTML = `<div style="color:var(--green);font-weight:600">✓ ${file.name}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">
+        IMU: ${imuN} | Erario: ${erN} | INPS: ${inN} | Regioni: ${rgN}
+      </div>`;
+  } catch(e) {
+    dz.innerHTML = `<div style="color:var(--red)">❌ ${e.message}</div>`;
+  }
+}
+
+function f24ParseText(text) {
+  const r = { dataVersamento:'', erario:[], inps:[], regioni:[], imu:[] };
+  const sm = text.match(/Scadenza\s+(\d{2})\/(\d{2})\/(\d{4})/);
+  if (sm) r.dataVersamento = sm[1]+sm[2]+sm[3];
+
+  for (const line of text.split('\n').map(l=>l.trim()).filter(l=>l)) {
+    // IMU: lettera + 3 cifre (spaziati) + codTrib(4) + rata(4) + anno(4) + intero spazio 2cifre
+    const imu = line.match(/^([A-Z] \d \d \d)\s+(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d+)\s+(\d{2})$/);
+    if (imu) { r.imu.push([imu[1].replace(/ /g,''),0,'0','0','0','0','0,00',imu[2],imu[3],imu[4],imu[5]+','+imu[6],'']); continue; }
+    // ERARIO con rata: TTTT RRRR AAAA INT CC
+    const er = line.match(/^(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d+)\s+(\d{2})$/);
+    if (er) { r.erario.push([er[1],er[2],er[3],er[4]+','+er[5],'']); continue; }
+    // ERARIO senza rata: TTTT AAAA INT CC
+    const er2 = line.match(/^(\d{4})\s+(\d{4})\s+(\d+)\s+(\d{2})$/);
+    if (er2 && +er2[2]>1900 && +er2[2]<2100) { r.erario.push([er2[1],'',er2[2],er2[3]+','+er2[4],'']); continue; }
+    // REGIONI: RR TTTT RRRR AAAA INT CC
+    const reg = line.match(/^(\d{2})\s+(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d+)\s+(\d{2})$/);
+    if (reg && +reg[1]>=1 && +reg[1]<=20) { r.regioni.push([reg[1],reg[2],reg[3],reg[4],reg[5]+','+reg[6],'']); }
+  }
+  return r;
+}
+
+// ── Genera ────────────────────────────────────────────────────────────────────
+async function f24Genera() {
+  try {
+    const resp = await fetch('/api/f24/genera-txt', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(f24S)
+    });
+    if (!resp.ok) { alert('Errore server: '+await resp.text()); return; }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dv = f24S.dataVersamento;
+    a.href=url; a.download=`F24_${dv||'output'}.txt`; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  } catch(e) { alert('Errore: '+e.message); }
+}
+</script>
 
 </body>
 </html>

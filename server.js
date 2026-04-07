@@ -1,8 +1,10 @@
+console.log('[AEC Cash] Avvio in corso...');
 const express = require('express');
 const Firebird = require('node-firebird');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+console.log('[AEC Cash] Moduli caricati OK');
 
 const app = express();
 app.use(cors());
@@ -17,6 +19,15 @@ const DB_OPTIONS = {
 };
 
 const DATA_FILE = path.join(__dirname, 'cashflow_data.json');
+
+// ─── FORNITORI SPECIALI (override locale) ────────────────────────────────────
+// Nomi case-insensitive (anche parziali). Aggiungere qui quando necessario.
+const FORNITORI_ESTERI_OVERRIDE = [
+  'allis electric'
+];
+const FORNITORI_ADDEBITO_DIRETTO = [
+  'sorgenia', 'unipoltech', 'cap holding', 'ca auto bank', 'ald automotive', 'iliad', 'wind tre'
+];
 
 function defaultSaldiBanche() {
   return {
@@ -95,6 +106,9 @@ function isoDate(d) {
 // ─── GET CASHFLOW DATA ────────────────────────────────────
 app.get('/api/cashflow', async (req, res) => {
   try {
+    const data = loadData();
+    const wiseSaldati = data.wise_saldati || {};
+
     const rows = await query(`
       SELECT p."Importo", p."DataScad", p."IDAnagr", p."Saldato",
              p."NomePagamDoc", p."IDDoc",
@@ -102,31 +116,36 @@ app.get('/api/cashflow', async (req, res) => {
       FROM "TPrimaNota" p
       LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
       WHERE p."Saldato" = 0
-        AND p."DataScad" >= CURRENT_DATE
       ORDER BY p."DataScad" ASC
     `);
 
-    const data = loadData();
-    const incassi = [];
+    const incassi  = [];
     const pagamenti = [];
 
     rows.forEach(r => {
       const imp = Number(r.importo) || 0;
+      const key = String(r.idanagr) + '_' + isoDate(r.datascad);
+      if (imp < 0 && wiseSaldati[key]) return;
       const entry = {
         data_scad: isoDate(r.datascad),
-        data_fmt: fmtDate(r.datascad),
-        importo: Math.abs(imp),
-        nome: (r.nome || '').trim(),
-        tipo_pagam: (r.nomepagamdoc || '').trim(),
-        id_doc: r.iddoc
+        data_fmt:  fmtDate(r.datascad),
+        importo:   Math.abs(imp),
+        nome:      (r.nome || '').trim(),
+        tipo_pagam:(r.nomepagamdoc || '').trim(),
+        id_doc:    r.iddoc
       };
-      if (imp > 0) incassi.push({ ...entry, tipo: 'incasso' });
-      else if (imp < 0) pagamenti.push({ ...entry, tipo: 'pagamento' });
+      if (imp > 0) {
+        incassi.push({ ...entry, tipo: 'incasso' });
+      } else if (imp < 0) {
+        pagamenti.push({ ...entry, tipo: 'pagamento' });
+      }
     });
+
+    pagamenti.sort((a,b) => (a.data_scad||'') < (b.data_scad||'') ? -1 : 1);
 
     res.json({
       saldo_iniziale: data.saldo_iniziale,
-      voci_manuali: data.voci_manuali || [],
+      voci_manuali:   data.voci_manuali || [],
       incassi,
       pagamenti
     });
@@ -457,9 +476,10 @@ app.get('/api/wise-export', async (req, res) => {
     // Regex estrazione IBAN
     const ibanRegex = /[A-Z]{2}\d{2}[A-Z0-9 ]{11,30}/;
 
-    // Carica IBAN manuali salvati
+    // Carica dati locali AEC Cash
     const data = loadData();
     const ibanManuali = data.wise_iban_manuali || {};
+    const wiseSaldati = data.wise_saldati || {}; // IDPrimaNota già pagati localmente
 
     const voci = rows.map(r => {
       // Priorità: 1) Pagam_CoordBancarie da ultima fattura, 2) CoordBancarieDefault anagrafica
@@ -473,6 +493,16 @@ app.get('/api/wise-export', async (req, res) => {
       const emailRaw = (r.email || '').trim();
       const email = emailRaw.split(/[;,]/)[0].trim() || null;
 
+      // Fornitore estero: nazione presente e diversa da Italia → IBAN non richiesto
+      const naz = (r.nazione || '').trim().toLowerCase();
+      const nomeL = (r.nome || '').toLowerCase();
+      const isEsteroNazione = naz !== '' && naz !== 'italia' && naz !== 'it';
+      const isEsteroOverride = FORNITORI_ESTERI_OVERRIDE.some(p => nomeL.includes(p.toLowerCase()));
+      const isEstero = isEsteroNazione || isEsteroOverride;
+      const isAddebitoDiretto = FORNITORI_ADDEBITO_DIRETTO.some(p => nomeL.includes(p.toLowerCase()));
+      // Se estero override: ignora IBAN da Danea (potrebbe essere un IBAN inserito erroneamente)
+      const ibanEff = isEsteroOverride ? null : iban;
+
       return {
         id: r.idprimanota,
         id_anagr: r.idanagr,
@@ -484,16 +514,21 @@ app.get('/api/wise-export', async (req, res) => {
         rata: (r.nomepagamdoc || '').trim(),
         rif: (r.rifpagam || '').trim(),
         coord_raw: coordRaw,
-        iban,
-        iban_manuale: !!ibanManuale,
-        iban_ok: !!iban,
+        iban: ibanEff,
+        iban_manuale: !!ibanManuale && !isEsteroOverride,
+        iban_ok: !!ibanEff || isEstero || isAddebitoDiretto,
+        estero: isEstero,
+        addebito_diretto: isAddebitoDiretto,
         nazione: (r.nazione || '').trim()
       };
     });
 
+    // Escludi pagamenti già saldati nel tracking locale AEC Cash
+    const vociFiltrate = voci.filter(v => !wiseSaldati[String(v.id)]);
+
     // Aggrega per fornitore (stesso IDAnagr) — somma importi stessa scadenza
     const byAnagr = {};
-    voci.forEach(v => {
+    vociFiltrate.forEach(v => {
       const k = v.id_anagr + '_' + v.data_scad;
       if (!byAnagr[k]) {
         byAnagr[k] = { ...v, importo: 0, ids: [], rate: [] };
@@ -505,7 +540,7 @@ app.get('/api/wise-export', async (req, res) => {
 
     const righe = Object.values(byAnagr).sort((a,b) => (a.data_scad||'') < (b.data_scad||'') ? -1 : 1);
     const totale = righe.reduce((s,r) => s+r.importo, 0);
-    const senzaIban = righe.filter(r => !r.iban_ok).length;
+    const senzaIban = righe.filter(r => !r.iban_ok && !r.estero && !r.addebito_diretto).length;
 
     res.json({ righe, totale, senzaIban });
   } catch(e) {
@@ -560,209 +595,342 @@ app.delete('/api/operazioni/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── SEGNA PAGATI IN DANEA ───────────────────────────────
+// ─── SEGNA PAGATI (tracking locale AEC Cash + tentativo Danea) ──────────
 app.post('/api/wise/segna-pagati', async (req, res) => {
   try {
     const { ids, data_pagamento } = req.body;
     if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
 
-    // Sanitizza: solo numeri interi
     const safeIds = ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id) && id > 0);
     if (!safeIds.length) return res.status(400).json({ error: 'ids non validi' });
 
-    // Formato data YYYY-MM-DD per Firebird
     const dataPag = (data_pagamento || new Date().toISOString().slice(0,10)).slice(0,10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dataPag)) return res.status(400).json({ error: 'formato data non valido' });
 
-    // Prima verifica: leggi stato attuale
-    const prima = await query(`SELECT "IDPrimaNota", "Saldato", "DataPagam" FROM "TPrimaNota" WHERE "IDPrimaNota" IN (${safeIds.join(',')})`);
-    console.log('PRIMA update:', JSON.stringify(prima));
+    // ── 1) Leggi dettagli da Danea per lo storico ─────────────────────────
+    let dettagli = [];
+    try {
+      dettagli = await query(`
+        SELECT p."IDPrimaNota", p."IDDoc", p."Importo", p."DataScad",
+               p."NomePagamDoc", p."RifPagam",
+               a."Nome"
+        FROM "TPrimaNota" p
+        LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
+        WHERE p."IDPrimaNota" IN (${safeIds.join(',')})
+      `);
+    } catch(e) { console.warn('Lettura dettagli fallita:', e.message); }
 
-    // Esegui UPDATE con transazione esplicita
-    const sql = `UPDATE "TPrimaNota" SET "Saldato" = 1, "DataPagam" = '${dataPag}' WHERE "IDPrimaNota" IN (${safeIds.join(',')}) AND "Saldato" = 0`;
-    console.log('SQL:', sql);
-    await execute(sql);
+    // ── 2) TRACKING LOCALE con storico completo ────────────────────────────
+    const data = loadData();
+    if (!data.wise_saldati) data.wise_saldati = {};
+    if (!data.wise_storico) data.wise_storico = [];
+    const saldatoIl = new Date().toISOString();
 
-    // Dopo: verifica che l'UPDATE abbia funzionato
-    const dopo = await query(`SELECT "IDPrimaNota", "Saldato", "DataPagam" FROM "TPrimaNota" WHERE "IDPrimaNota" IN (${safeIds.join(',')})`);
-    console.log('DOPO update:', JSON.stringify(dopo));
+    // Salva nel dizionario (per filtro rapido)
+    safeIds.forEach(id => {
+      const det = dettagli.find(d => d.idprimanota === id) || {};
+      data.wise_saldati[String(id)] = {
+        data_pagamento: dataPag,
+        saldato_il: saldatoIl,
+        nome: (det.nome || '').trim(),
+        importo: Math.abs(Number(det.importo) || 0),
+        id_doc: det.iddoc || null,
+        rata: (det.nomepagamdoc || '').trim(),
+        rif: (det.rifpagam || '').trim()
+      };
+    });
 
-    const aggiornati = dopo.filter(r => r.saldato === 1).length;
-    const falliti = dopo.filter(r => r.saldato !== 1).map(r => r.idprimanota);
+    // Salva nello storico (array cronologico, mai cancellato)
+    data.wise_storico.push({
+      batch_id: saldatoIl,
+      data_pagamento: dataPag,
+      saldato_il: saldatoIl,
+      pagamenti: safeIds.map(id => {
+        const det = dettagli.find(d => d.idprimanota === id) || {};
+        return {
+          id,
+          nome: (det.nome || '').trim(),
+          importo: Math.abs(Number(det.importo) || 0),
+          data_scad: det.datascad ? new Date(det.datascad).toISOString().slice(0,10) : null,
+          id_doc: det.iddoc || null,
+          rata: (det.nomepagamdoc || '').trim(),
+          rif: (det.rifpagam || '').trim()
+        };
+      }),
+      totale: dettagli.reduce((s, d) => s + Math.abs(Number(d.importo) || 0), 0)
+    });
+    saveData(data);
+    console.log('Tracking locale salvato per IDs:', safeIds);
 
-    if (falliti.length > 0) {
-      console.error('UPDATE NON riuscita per IDs:', falliti);
-      res.json({ ok: false, error: `UPDATE non committata. IDs non aggiornati: ${falliti.join(', ')}`, aggiornati, falliti, prima, dopo });
-    } else {
-      res.json({ ok: true, aggiornati, prima, dopo });
+    // ── 3) TENTATIVO AGGIORNAMENTO DANEA (best-effort) ────────────────────
+    const daneaErrors = [];
+    try {
+      await execute(`UPDATE "TPrimaNota" SET "Saldato" = 1, "DataPagam" = '${dataPag}' WHERE "IDPrimaNota" IN (${safeIds.join(',')}) AND "Saldato" = 0`);
+      const idDocs = [...new Set(dettagli.map(r => r.iddoc).filter(Boolean))];
+      for (const idDoc of idDocs) {
+        const safeIdDoc = parseInt(idDoc, 10);
+        if (isNaN(safeIdDoc)) continue;
+        const doc = await query(`SELECT "TotDoc" FROM "TDocTestate" WHERE "IDDoc" = ${safeIdDoc}`);
+        if (!doc.length) continue;
+        const totDoc = doc[0].totdoc || 0;
+        await execute(`UPDATE "TDocTestate" SET "Pagam_ImportoSaldato" = ${totDoc}, "Pagam_ImportoDaSaldare" = 0, "Pagam_Saldato" = 1, "Pagam_ShowForzaSaldato" = 1, "Pagam_ForzaSaldato" = 1 WHERE "IDDoc" = ${safeIdDoc}`);
+      }
+    } catch(e) {
+      daneaErrors.push(e.message);
+      console.warn('Aggiornamento Danea fallito (non critico):', e.message);
     }
+
+    res.json({
+      ok: true,
+      aggiornati: safeIds.length,
+      tracking_locale: 'salvato',
+      danea_db: daneaErrors.length ? 'errore (non critico): ' + daneaErrors.join('; ') : 'aggiornato'
+    });
   } catch(e) {
     console.error('Errore segna-pagati:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// ─── DEBUG: TEST UPDATE CON LOG PASSO-PASSO ─────────────
-app.get('/api/debug/test-update', (req, res) => {
-  const log = [];
-  const id = 17842;
+// ─── STORICO PAGAMENTI WISE ──────────────────────────────────────────────
+app.get('/api/wise/storico', (req, res) => {
+  const data = loadData();
+  const commenti = data.storico_commenti || {};
+  const storico = (data.wise_storico || []).slice().reverse().map(b => ({...b, commento: commenti[b.batch_id] || ''}));
+  res.json({ storico });
+});
 
-  log.push('1. Connessione a Firebird...');
-  Firebird.attach(DB_OPTIONS, (err, db) => {
-    if (err) return res.json({ log, error: 'attach: ' + err.message });
-    log.push('2. Connesso. Leggo stato PRIMA...');
+// ─── RIMUOVI DA SALDATI LOCALI (per correggere errori) ──────────────────
+app.post('/api/wise/annulla-saldato', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
+  const data = loadData();
+  if (!data.wise_saldati) data.wise_saldati = {};
+  ids.forEach(id => delete data.wise_saldati[String(parseInt(id, 10))]);
+  saveData(data);
+  res.json({ ok: true, rimossi: ids.length });
+});
 
-    db.query(`SELECT "Saldato", "DataPagam" FROM "TPrimaNota" WHERE "IDPrimaNota" = ${id}`, (err, prima) => {
-      if (err) { db.detach(); return res.json({ log, error: 'select prima: ' + err.message }); }
-      log.push('3. PRIMA: ' + JSON.stringify(prima));
 
-      log.push('4. Inizio transazione esplicita...');
-      db.transaction(Firebird.ISOLATION_READ_COMMITTED, (err, tr) => {
-        if (err) { db.detach(); return res.json({ log, error: 'transaction: ' + err.message }); }
-        log.push('5. Transazione aperta. Eseguo UPDATE...');
+// ─── Helper: calcola rate da PagamentoDefault + DataDoc ──────────────────────
+// Ritorna array di { giorni, scadenza } — una o più rate
+// Logica:
+//   - DFFM / DFF.M. / F.M. / FM → parti dall'ultimo giorno del mese fattura
+//   - "60/90 gg" → due rate (metà + metà)
+//   - "+10"      → giorni extra aggiunti ad ogni rata
+//   - "vista"    → scadenza = data fattura
+function calcolaRateDaPagamento(dataDoc, pagamentoDefault) {
+  if (!dataDoc) return [{ scadenza: null, quota: 1 }];
+  const str = (pagamentoDefault || '').toLowerCase();
 
-        const sql = `UPDATE "TPrimaNota" SET "Saldato" = 1, "DataPagam" = '2026-04-02' WHERE "IDPrimaNota" = ${id}`;
-        log.push('6. SQL: ' + sql);
+  // Pagamento immediato
+  if (!str || str.includes('vista') || str.includes('advance') || str.includes('anticipo') || str.includes('subito') || str.includes('immediat')) {
+    return [{ scadenza: new Date(dataDoc).toISOString().slice(0,10), quota: 1 }];
+  }
 
-        tr.query(sql, (err, result) => {
-          if (err) {
-            log.push('7. ERRORE update: ' + err.message);
-            tr.rollback(() => db.detach());
-            return res.json({ log, error: 'update: ' + err.message });
-          }
-          log.push('7. UPDATE eseguita (result: ' + JSON.stringify(result) + ')');
+  // Fine Mese?
+  const isFineMese = str.includes('dff') || str.includes('f.m.') || /\bfm\b/.test(str) || str.includes('fine mese');
 
-          log.push('8. COMMIT...');
-          tr.commit((err) => {
-            if (err) {
-              log.push('9. ERRORE commit: ' + err.message);
-              db.detach();
-              return res.json({ log, error: 'commit: ' + err.message });
-            }
-            log.push('9. COMMIT OK!');
+  // Giorni extra espliciti (es. "+10")
+  const matchExtra = str.match(/\+\s*(\d+)/);
+  const extra = matchExtra ? parseInt(matchExtra[1], 10) : 0;
 
-            log.push('10. Chiudo connessione...');
-            db.detach();
-            log.push('11. Connessione chiusa. Apro NUOVA connessione per verifica...');
+  // Cerca pattern "60/90" o "30/60/90" (rate multiple)
+  const matchMulti = str.match(/([\d]+(?:\/[\d]+)+)\s*gg/);
+  if (matchMulti) {
+    const valori = matchMulti[1].split('/').map(Number);
+    const nRate = valori.length;
+    return valori.map(g => {
+      let base = new Date(dataDoc);
+      if (isFineMese) base = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+      base.setDate(base.getDate() + g + extra);
+      return { scadenza: base.toISOString().slice(0,10), quota: 1 / nRate };
+    });
+  }
 
-            // Nuova connessione indipendente per verificare
-            Firebird.attach(DB_OPTIONS, (err, db2) => {
-              if (err) return res.json({ log, error: 'attach2: ' + err.message });
-              log.push('12. Nuova connessione aperta. Leggo stato DOPO...');
+  // Singola rata
+  const matchGiorni = str.match(/(\d+)/);
+  const giorni = matchGiorni ? parseInt(matchGiorni[1], 10) : 30;
+  let base = new Date(dataDoc);
+  if (isFineMese) base = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+  base.setDate(base.getDate() + giorni + extra);
+  return [{ scadenza: base.toISOString().slice(0,10), quota: 1 }];
+}
 
-              db2.query(`SELECT "Saldato", "DataPagam" FROM "TPrimaNota" WHERE "IDPrimaNota" = ${id}`, (err, dopo) => {
-                db2.detach();
-                if (err) return res.json({ log, error: 'select dopo: ' + err.message });
-                log.push('13. DOPO: ' + JSON.stringify(dopo));
+// ─── FATTURE SDI: lista da pagare ────────────────────────────────────────────
+app.get('/api/fatture-sdi', async (req, res) => {
+  try {
+    const data = loadData();
+    const sdiSaldati  = data.sdi_saldati  || {};
+    const sdiScadenze = data.sdi_scadenze || {};
 
-                const funziona = dopo && dopo[0] && dopo[0].saldato === 1;
-                log.push(funziona ? '14. ✅ UPDATE PERSISTITA!' : '14. ❌ UPDATE NON PERSISTITA!');
+    // Query 1: fatture TAgyo non ancora registrate in Danea
+    // Niente filtro data in SQL (Firebird è sensibile al formato) — filtriamo in JS
+    let rows;
+    try {
+      rows = await query(`SELECT * FROM "TAgyo" WHERE "Acq" = 1 ORDER BY "DataRicezione" DESC`);
+    } catch(e1) {
+      return res.status(500).json({ error: 'Query TAgyo fallita', detail: e1.message });
+    }
 
-                res.json({ log, funziona, prima: prima[0], dopo: dopo[0] });
-              });
-            });
-          });
+    // Filtro data in JS: solo fatture ricevute dal 01/04/2026
+    const cutoff = new Date('2026-04-01');
+    rows = rows.filter(r => {
+      if (!r.dataricezione) return false;
+      return new Date(r.dataricezione) >= cutoff;
+    });
+
+    // Query 2: anagrafica fornitori per leggere PagamentoDefault e IBAN
+    const pagMap  = {};
+    const ibanMap = {};
+    const ibanRegex = /[A-Z]{2}\d{2}[A-Z0-9 ]{11,30}/;
+    const sdiIbanManuali = data.sdi_iban_manuali || {};
+    const sdiNote        = data.sdi_note        || {};
+    try {
+      const anRows = await query(`SELECT * FROM "TAnagrafica"`);
+      anRows.forEach(r => {
+        // Includi solo fornitori (campo Fornitore: 'S', 1, true — accetta qualsiasi valore truthy)
+        const isFornitore = r.fornitore == 1 || r.fornitore === 'S' || r.fornitore === true;
+        if (!isFornitore) return;
+        const pag      = r.pagamentodefault || null;
+        const coordRaw = (r.coordbancariedefault || '').trim();
+        const match    = coordRaw.match(ibanRegex);
+        const ibanDb   = match ? match[0].replace(/\s/g, '') : null;
+        const keys = [];
+        if (r.partitaiva    && (r.partitaiva    + '').trim()) keys.push((r.partitaiva    + '').trim());
+        if (r.codicefiscale && (r.codicefiscale + '').trim()) keys.push((r.codicefiscale + '').trim());
+        keys.forEach(k => {
+          pagMap[k] = pag;
+          if (ibanDb) ibanMap[k] = ibanDb;
+        });
+      });
+    } catch(e2) {
+      // Non bloccare se TAnagrafica fallisce: le scadenze saranno null (impostabili a mano)
+      console.warn('TAnagrafica query fallita:', e2.message);
+    }
+
+    const fatture = [];
+    rows.filter(r => !sdiSaldati[r.idagyo]).forEach(r => {
+      const dataDoc       = r.datadoc ? new Date(r.datadoc) : null;
+      const importoTot    = Math.abs(Number(r.totdovuto) || 0);
+      const cf            = (r.codicefiscale || '').trim();
+      const piva          = (r.partitaiva || '').trim();
+      const pagamento     = pagMap[cf] || pagMap[piva] || null;
+      const rate          = calcolaRateDaPagamento(dataDoc, pagamento);
+      const nRate         = rate.length;
+
+      rate.forEach((rata, idx) => {
+        const rataId       = nRate > 1 ? `${r.idagyo}_r${idx+1}` : r.idagyo;
+        const scadOverride = sdiScadenze[rataId] || null;
+        const nomeL = (r.nome || '').toLowerCase();
+        const isAddebitoDiretto = FORNITORI_ADDEBITO_DIRETTO.some(p => nomeL.includes(p.toLowerCase()));
+        fatture.push({
+          id:              rataId,
+          id_agyo:         r.idagyo,
+          rata_n:          nRate > 1 ? `${idx+1}/${nRate}` : null,
+          nome:            (r.nome || '').trim(),
+          cf:              cf,
+          numdoc:          (r.numdoc || '').trim(),
+          tipodoc:         (r.tipodocfe || '').trim(),
+          data_doc:        dataDoc ? dataDoc.toISOString().slice(0,10) : null,
+          data_ricezione:  r.dataricezione ? new Date(r.dataricezione).toISOString().slice(0,10) : null,
+          pagamento_desc:  (pagamento || '').trim(),
+          scadenza:        scadOverride || rata.scadenza || null,
+          scadenza_manual: !!scadOverride,
+          importo:         Math.round(importoTot * rata.quota * 100) / 100,
+          iban:            ibanMap[cf] || ibanMap[piva] || null,
+          iban_manuale:    sdiIbanManuali[cf] || sdiIbanManuali[piva] || null,
+          note:            sdiNote[rataId] || '',
+          addebito_diretto: isAddebitoDiretto
         });
       });
     });
-  });
+
+    res.json({ fatture, totale: fatture.reduce((s, f) => s + f.importo, 0) });
+  } catch(e) { res.status(500).json({ error: e.message, stack: e.stack }); }
 });
 
-// ─── DEBUG: ANALISI COMPLETA DB DANEA ────────────────────
-app.get('/api/debug/saldato', async (req, res) => {
+// ─── FATTURE SDI: modifica scadenza manuale ───────────────────────────────────
+app.post('/api/fatture-sdi/set-scadenza', (req, res) => {
+  const { id, scadenza } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  if (scadenza && !/^\d{4}-\d{2}-\d{2}$/.test(scadenza)) return res.status(400).json({ error: 'formato data non valido' });
+  const data = loadData();
+  if (!data.sdi_scadenze) data.sdi_scadenze = {};
+  if (scadenza) data.sdi_scadenze[id] = scadenza;
+  else delete data.sdi_scadenze[id];
+  saveData(data);
+  res.json({ ok: true });
+});
+
+/// ─── FATTURE SDI: set nota/riferimento ────────────────────────────────────────
+app.post('/api/fatture-sdi/set-note', (req, res) => {
+  const { id, note } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const data = loadData();
+  if (!data.sdi_note) data.sdi_note = {};
+  if (note) data.sdi_note[id] = note;
+  else delete data.sdi_note[id];
+  saveData(data);
+  res.json({ ok: true });
+});
+
+// ─── FATTURE SDI: set IBAN manuale fornitore ──────────────────────────────────
+app.post('/api/fatture-sdi/set-iban', (req, res) => {
+  const { cf, iban } = req.body;
+  if (!cf) return res.status(400).json({ error: 'cf required' });
+  const data = loadData();
+  if (!data.sdi_iban_manuali) data.sdi_iban_manuali = {};
+  if (iban) data.sdi_iban_manuali[cf] = iban.replace(/\s/g, '').toUpperCase();
+  else delete data.sdi_iban_manuali[cf];
+  saveData(data);
+  res.json({ ok: true });
+});
+
+// ─── FATTURE SDI: segna come pagate ──────────────────────────────────────────
+app.post('/api/fatture-sdi/segna-pagate', (req, res) => {
   try {
-    // 1) Tutte le tabelle del DB Danea
-    const tabelle = await query(`
-      SELECT RDB$RELATION_NAME AS nome
-      FROM RDB$RELATIONS
-      WHERE RDB$SYSTEM_FLAG = 0 AND RDB$VIEW_BLR IS NULL
-      ORDER BY RDB$RELATION_NAME
-    `);
+    const { ids, data_pagamento, fatture_dettaglio } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
+    const dataPag = (data_pagamento || new Date().toISOString().slice(0,10)).slice(0,10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataPag)) return res.status(400).json({ error: 'formato data non valido' });
 
-    // 2) Tabelle che contengono "Sald" o "Pagam" nel nome
-    const tabelleRilevanti = tabelle.filter(t =>
-      t.nome && (t.nome.includes('Sald') || t.nome.includes('Pagam') || t.nome.includes('Giroconto') ||
-                 t.nome.includes('Log') || t.nome.includes('Storico') || t.nome.includes('MovBanca') ||
-                 t.nome.includes('Mov') || t.nome.includes('Cassa'))
-    );
+    const data = loadData();
+    if (!data.sdi_saldati)  data.sdi_saldati  = {};
+    if (!data.sdi_storico)  data.sdi_storico  = [];
+    const saldatoIl = new Date().toISOString();
 
-    // 3) Tabelle con foreign key verso TPrimaNota
-    const fk = await query(`
-      SELECT rc.RDB$CONSTRAINT_NAME AS fk_name,
-             rc.RDB$RELATION_NAME AS from_table,
-             isg.RDB$FIELD_NAME AS from_field,
-             rc2.RDB$RELATION_NAME AS to_table
-      FROM RDB$RELATION_CONSTRAINTS rc
-      JOIN RDB$REF_CONSTRAINTS ref ON ref.RDB$CONSTRAINT_NAME = rc.RDB$CONSTRAINT_NAME
-      JOIN RDB$RELATION_CONSTRAINTS rc2 ON rc2.RDB$CONSTRAINT_NAME = ref.RDB$CONST_NAME_UKY
-      JOIN RDB$INDEX_SEGMENTS isg ON isg.RDB$INDEX_NAME = rc.RDB$INDEX_NAME
-      WHERE rc.RDB$CONSTRAINT_TYPE = 'FOREIGN KEY'
-        AND (rc2.RDB$RELATION_NAME = 'TPrimaNota' OR rc.RDB$RELATION_NAME = 'TPrimaNota')
-    `);
-
-    // 4) Struttura colonne di TPrimaNota (tipo dati)
-    const colonne = await query(`
-      SELECT rf.RDB$FIELD_NAME AS col_name,
-             f.RDB$FIELD_TYPE AS field_type,
-             f.RDB$FIELD_LENGTH AS field_length,
-             f.RDB$FIELD_SCALE AS field_scale,
-             rf.RDB$NULL_FLAG AS not_null
-      FROM RDB$RELATION_FIELDS rf
-      JOIN RDB$FIELDS f ON f.RDB$FIELD_SOURCE = rf.RDB$FIELD_SOURCE
-      WHERE rf.RDB$RELATION_NAME = 'TPrimaNota'
-      ORDER BY rf.RDB$FIELD_POSITION
-    `);
-
-    // 5) Record 17842 stato attuale
-    const rec17842 = await query(`SELECT p.* FROM "TPrimaNota" p WHERE p."IDPrimaNota" = 17842`);
-
-    // 6) Cerco tabelle che referenziano IDPrimaNota 17842
-    // Cerca in TDocTestate se c'è un legame via IDDoc
-    const docTestata = await query(`SELECT * FROM "TDocTestate" WHERE "IDDoc" = 31872`);
-
-    // 7) Cerco se esiste una tabella di giroconti/movimenti banca
-    let giroconti = null;
-    try { giroconti = await query(`SELECT FIRST 3 * FROM "TGiroconti" ORDER BY 1 DESC`); } catch(e) { giroconti = 'tabella non esiste'; }
-
-    let movBanca = null;
-    try { movBanca = await query(`SELECT FIRST 3 * FROM "TMovBanca" ORDER BY 1 DESC`); } catch(e) { movBanca = 'tabella non esiste'; }
-
-    let logPagam = null;
-    try { logPagam = await query(`SELECT FIRST 3 * FROM "TLogPagamenti" ORDER BY 1 DESC`); } catch(e) { logPagam = 'tabella non esiste'; }
-
-    // 8) Confronto: record saldato da Easyfatt (16224) - TUTTI i campi documento collegato
-    const docSaldato = await query(`SELECT * FROM "TDocTestate" WHERE "IDDoc" = 27495`);
-
-    // 9) Confronto campo "Saldato" nella testata documento
-    let docSaldatoFlag31872 = null;
-    let docSaldatoFlag27495 = null;
-    try {
-      docSaldatoFlag31872 = await query(`SELECT "IDDoc", "Saldato" FROM "TDocTestate" WHERE "IDDoc" = 31872`);
-      docSaldatoFlag27495 = await query(`SELECT "IDDoc", "Saldato" FROM "TDocTestate" WHERE "IDDoc" = 27495`);
-    } catch(e) { docSaldatoFlag31872 = 'campo Saldato non esiste in TDocTestate'; }
-
-    res.json({
-      tutte_le_tabelle: tabelle.map(t => (t.nome||'').trim()),
-      tabelle_rilevanti: tabelleRilevanti.map(t => (t.nome||'').trim()),
-      foreign_keys_TPrimaNota: fk,
-      colonne_TPrimaNota: colonne.map(c => ({
-        nome: (c.col_name||'').trim(),
-        tipo: c.field_type,
-        lunghezza: c.field_length,
-        scala: c.field_scale,
-        not_null: c.not_null
-      })),
-      record_17842: rec17842[0] || null,
-      doc_testata_31872_nostro: docTestata[0] || null,
-      doc_testata_27495_danea: docSaldato[0] || null,
-      doc_saldato_flag: { nostro_31872: docSaldatoFlag31872, danea_27495: docSaldatoFlag27495 },
-      giroconti,
-      movBanca,
-      logPagamenti: logPagam
+    const dett = fatture_dettaglio || [];
+    ids.forEach(id => {
+      const f = dett.find(x => x.id === id) || {};
+      data.sdi_saldati[id] = { data_pagamento: dataPag, saldato_il: saldatoIl, nome: f.nome || '', importo: f.importo || 0, numdoc: f.numdoc || '', data_doc: f.data_doc || null };
     });
-  } catch(e) {
-    res.status(500).json({ error: e.message, stack: e.stack });
-  }
+
+    const pagamenti = ids.map(id => { const f = dett.find(x => x.id === id) || {}; return { id, nome: f.nome || '', importo: f.importo || 0, numdoc: f.numdoc || '', data_doc: f.data_doc || null }; });
+    const totale = pagamenti.reduce((s, p) => s + (p.importo || 0), 0);
+    data.sdi_storico.push({ batch_id: saldatoIl, data_pagamento: dataPag, saldato_il: saldatoIl, pagamenti, totale });
+    saveData(data);
+    res.json({ ok: true, aggiornati: ids.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+/// ─── FATTURE SDI: storico pagamenti ──────────────────────────────────────────
+app.get('/api/fatture-sdi/storico', (req, res) => {
+  const data = loadData();
+  const commenti = data.storico_commenti || {};
+  res.json({ storico: (data.sdi_storico || []).slice().reverse().map(b => ({...b, commento: commenti[b.batch_id] || ''})) });
+});
+
+// ─── STORICO: set commento su batch ──────────────────────────────────────────
+app.post('/api/storico/set-commento', (req, res) => {
+  const { batch_id, commento } = req.body;
+  if (!batch_id) return res.status(400).json({ error: 'batch_id required' });
+  const data = loadData();
+  if (!data.storico_commenti) data.storico_commenti = {};
+  if (commento && commento.trim()) data.storico_commenti[batch_id] = commento.trim();
+  else delete data.storico_commenti[batch_id];
+  saveData(data);
+  res.json({ ok: true });
 });
 
 // ─── SAVE SALDO INIZIALE CASHFLOW ─────────────────────────
@@ -823,8 +991,123 @@ app.delete('/api/voce/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+
+// ─── F24 TELEMATICO ──────────────────────────────────────────────────────────
+
+function f24an(v,l){return String(v||'').toUpperCase().slice(0,l).padEnd(l);}
+function f24nu(v,l){let n=0;try{n=Math.abs(parseInt(String(v||'0').trim())||0);}catch(e){}return String(n).padStart(l,'0').slice(-l);}
+function f24euro(s){s=String(s||'').trim();if(!s)return 0;return parseInt(s.replace(/\./g,'').replace(',',''))||0;}
+function f24c15(c){return String(Math.abs(Math.round(c))).padStart(15,'0').slice(-15);}
+function f24itfmt(c){const n=Math.abs(Math.round(c)),e=Math.floor(n/100),d=n%100;return e.toLocaleString('it-IT')+','+String(d).padStart(2,'0');}
+function f24tot(dc){const td=dc.reduce((s,[d])=>s+d,0),tc=dc.reduce((s,[,c])=>s+c,0),sa=td-tc;return[td,tc,(td===0&&tc===0)?' ':(sa>=0?'P':'N'),Math.abs(sa)];}
+function f24w(b,p,t){for(let i=0;i<t.length;i++)b[p+i]=t[i];}
+function f24end(b){return b.join('')+'A\r\n';}
+
+function genRecordA(c){
+  const b=Array(1897).fill(' ');b[0]='A';
+  f24w(b,15,f24an('F24A0',5));f24w(b,20,f24an('14',2));f24w(b,22,f24an(c.cf,16));
+  f24w(b,83,f24nu(0,8));f24w(b,210,f24nu(0,5));
+  f24w(b,215,f24an(c.denominazione,60));f24w(b,275,f24an(c.comune,40));
+  f24w(b,315,f24an(c.prov,2));f24w(b,317,f24an(c.indirizzo,35));f24w(b,352,f24nu(c.cap,5));
+  f24w(b,357,f24an(c.comune,40));f24w(b,397,f24an(c.prov,2));f24w(b,399,f24an(c.indirizzo,35));f24w(b,434,f24nu(c.cap,5));
+  f24w(b,521,f24nu(1,3));f24w(b,524,f24nu(1,3));
+  return f24end(b);
+}
+
+function genRecordM(c,saldo){
+  const b=Array(1897).fill(' ');b[0]='M';
+  f24w(b,1,f24an(c.cf,16));f24w(b,17,f24nu(1,8));
+  b[90]='E';b[91]='0';b[92]='0';b[109]='0';
+  f24w(b,155,f24nu(0,8));f24w(b,247,f24nu(0,5));
+  f24w(b,287,f24an(c.comune,40));f24w(b,327,f24an(c.prov,2));
+  f24w(b,329,f24nu(c.cap,5));f24w(b,334,f24an(c.indirizzo,35));
+  f24w(b,481,f24nu(0,8));f24w(b,517,f24an(c.denominazione,55));
+  f24w(b,1868,f24an('EURO',4));f24w(b,1872,f24an(f24itfmt(saldo),15));
+  const dv=c.dataVersamento;
+  f24w(b,1887,f24an(dv.slice(0,2)+'-'+dv.slice(2,4)+'-'+dv.slice(4,8),10));
+  return f24end(b);
+}
+
+function genRecordV(c){
+  const b=Array(1897).fill(' ');b[0]='V';
+  f24w(b,1,f24an(c.cf,16));f24w(b,17,f24nu(1,8));b[89]='A';f24w(b,93,f24nu(0,11));
+  // ERARIO
+  const PE=[104,162,220,278,336,394];const eDc=[];
+  for(let i=0;i<6;i++){const p=PE[i];let dC=0,cC=0;
+    if(i<(c.erario||[]).length){const[ct,nr,an,ds,cs]=c.erario[i];dC=f24euro(ds);cC=f24euro(cs);
+      f24w(b,p,f24an(ct,4));f24w(b,p+4,f24an('',16));f24w(b,p+20,f24an(nr,4));f24w(b,p+24,f24an(an,4));f24w(b,p+28,f24c15(dC));f24w(b,p+43,f24c15(cC));
+    }else{f24w(b,p+24,f24nu(0,4));f24w(b,p+28,f24c15(0));f24w(b,p+43,f24c15(0));}
+    eDc.push([dC,cC]);}
+  const[etd,etc,es,esa]=f24tot(eDc);f24w(b,452,f24c15(etd));f24w(b,467,f24c15(etc));b[482]=es;f24w(b,483,f24c15(esa));
+  // INPS
+  const PI=[498,565,632,699];const iDc=[];
+  for(let i=0;i<4;i++){const p=PI[i];let dC=0,cC=0;
+    if(i<(c.inps||[]).length){const[sd,ca,ma,pd,pa,ds,cs]=c.inps[i];dC=f24euro(ds);cC=f24euro(cs);
+      f24w(b,p,f24an(sd,4));f24w(b,p+4,f24an(ca,4));f24w(b,p+8,f24an(ma,17));f24w(b,p+25,f24an(pd,6));f24w(b,p+31,f24nu(pa,6));f24w(b,p+37,f24c15(dC));f24w(b,p+52,f24c15(cC));
+    }else{f24w(b,p,f24nu(0,4));f24w(b,p+25,f24nu(0,6));f24w(b,p+31,f24nu(0,6));f24w(b,p+37,f24c15(0));f24w(b,p+52,f24c15(0));}
+    iDc.push([dC,cC]);}
+  const[itd,itc,is,isa]=f24tot(iDc);f24w(b,766,f24c15(itd));f24w(b,781,f24c15(itc));b[796]=is;f24w(b,797,f24c15(isa));
+  // REGIONI
+  const PR=[812,856,900,944];const rDc=[];
+  for(let i=0;i<4;i++){const p=PR[i];let dC=0,cC=0,act=false;
+    if(i<(c.regioni||[]).length){const[cr,tr,rz,an,ds,cs]=c.regioni[i];dC=f24euro(ds);cC=f24euro(cs);
+      if(dC||cC){act=true;f24w(b,p,f24an(cr,2));f24w(b,p+2,f24an(tr,4));f24w(b,p+6,f24an(rz,4));f24w(b,p+10,f24an(an,4));f24w(b,p+14,f24c15(dC));f24w(b,p+29,f24c15(cC));}}
+    if(!act){dC=cC=0;f24w(b,p,f24nu(0,2));f24w(b,p+10,f24nu(0,4));f24w(b,p+14,f24c15(0));f24w(b,p+29,f24c15(0));}
+    rDc.push([dC,cC]);}
+  const[rtd,rtc,rs,rsa]=f24tot(rDc);f24w(b,988,f24c15(rtd));f24w(b,1003,f24c15(rtc));b[1018]=rs;f24w(b,1019,f24c15(rsa));
+  // IMU
+  const PIM=[1052,1120,1188,1256];const mDc=[];
+  for(let i=0;i<4;i++){const p=PIM[i];let dC=0,cC=0;
+    if(i<(c.imu||[]).length){const[cc,ni,ac,sf,iv,ae,dt,ct,nr,an,ds,cs]=c.imu[i];dC=f24euro(ds);cC=f24euro(cs);const dtC=f24euro(dt);
+      f24w(b,p,f24an(cc,4));b[p+4]=String(ae||'0')[0];b[p+5]=String(iv||'0')[0];b[p+6]=String(ac||'0')[0];b[p+7]=String(sf||'0')[0];
+      f24w(b,p+8,f24nu(ni,3));f24w(b,p+11,f24c15(dtC));f24w(b,p+26,f24an(ct,4));f24w(b,p+30,f24an(nr,4));f24w(b,p+34,f24an(an,4));f24w(b,p+38,f24c15(dC));f24w(b,p+53,f24c15(cC));
+    }else{b[p+4]='0';b[p+5]='0';b[p+6]='0';b[p+7]='0';f24w(b,p+8,f24nu(0,3));f24w(b,p+11,f24c15(0));f24w(b,p+34,f24nu(0,4));f24w(b,p+38,f24c15(0));f24w(b,p+53,f24c15(0));}
+    mDc.push([dC,cC]);}
+  const[mtd,mtc,ms,msa]=f24tot(mDc);f24w(b,1324,f24c15(mtd));f24w(b,1339,f24c15(mtc));b[1354]=ms;f24w(b,1355,f24c15(msa));
+  // INAIL zero-fill
+  for(const p of[1370,1422,1474]){f24w(b,p,f24nu(0,5));f24w(b,p+5,f24nu(0,8));f24w(b,p+13,f24nu(0,2));f24w(b,p+15,f24nu(0,6));f24w(b,p+22,f24c15(0));f24w(b,p+37,f24c15(0));}
+  f24w(b,1526,f24c15(0));f24w(b,1541,f24c15(0));b[1556]=' ';f24w(b,1557,f24c15(0));
+  // ALTRI ENTI zero-fill
+  f24w(b,1572,f24nu(0,4));
+  for(const p of[1576,1636]){f24w(b,p+9,f24nu(0,9));f24w(b,p+18,f24nu(0,6));f24w(b,p+24,f24nu(0,6));f24w(b,p+30,f24c15(0));f24w(b,p+45,f24c15(0));}
+  f24w(b,1696,f24c15(0));f24w(b,1711,f24c15(0));b[1726]=' ';f24w(b,1727,f24c15(0));
+  // Saldo finale
+  const allDc=[...eDc,...iDc,...rDc,...mDc];
+  const allDeb=allDc.reduce((s,[d])=>s+d,0),allCred=allDc.reduce((s,[,c])=>s+c,0);
+  f24w(b,1792,f24c15(Math.abs(allDeb-allCred)));f24w(b,1807,f24an(c.dataVersamento,8));
+  return[f24end(b),allDeb-allCred];
+}
+
+function genRecordZ(nV,nM){const b=Array(1897).fill(' ');b[0]='Z';f24w(b,15,f24nu(nV,9));f24w(b,24,f24nu(nM,9));return f24end(b);}
+
+const F24_FIXED={cf:'12520320156',denominazione:'AEC INTERNATIONAL S.R.L.',comune:'LAINATE',prov:'MI',indirizzo:'VIA NERVIANO 55',cap:'20020'};
+
+app.post('/api/f24/genera-txt',(req,res)=>{
+  try{
+    const cfg={...F24_FIXED,...req.body};
+    const[vData,saldoNetto]=genRecordV(cfg);
+    const content=genRecordA(cfg)+genRecordM(cfg,Math.abs(saldoNetto))+vData+genRecordZ(1,1);
+    const dv=cfg.dataVersamento||'00000000';
+    const fname=`F24_${dv.slice(4,8)}${dv.slice(2,4)}${dv.slice(0,2)}.txt`;
+    res.setHeader('Content-Type','text/plain; charset=ascii');
+    res.setHeader('Content-Disposition',`attachment; filename="${fname}"`);
+    res.send(content);
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const PORT = 8087;
-app.listen(PORT, '0.0.0.0', () => {
+console.log(`[AEC Cash] Tentativo bind porta ${PORT}...`);
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`\nAEC Cashflow Server avviato su http://0.0.0.0:${PORT}`);
   console.log(`   Rete locale: http://172.17.2.100:${PORT}\n`);
+});
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n[ERRORE] Porta ${PORT} già in uso! Chiudi il vecchio processo node.exe e riprova.\n`);
+  } else {
+    console.error(`\n[ERRORE] Listen fallito: ${err.message}\n`);
+  }
+  process.exit(1);
 });
