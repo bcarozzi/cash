@@ -6,7 +6,7 @@ const fs = require('fs');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const DB_OPTIONS = {
@@ -1112,6 +1112,92 @@ app.post('/api/f24/genera-txt',(req,res)=>{
     res.setHeader('Content-Disposition',`attachment; filename="${fname}"`);
     res.send(content);
   }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+// ─── F24 OCR (Claude Vision) ──────────────────────────────────────────────────
+
+app.post('/api/f24/ocr-page', async (req, res) => {
+  try {
+    let Anthropic;
+    try { Anthropic = require('@anthropic-ai/sdk'); }
+    catch(e) { return res.status(503).json({ ok:false, error:'SDK Anthropic non installato. Esegui: npm install @anthropic-ai/sdk' }); }
+
+    try { require('dotenv').config(); } catch(e) {}
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ ok:false, error:'ANTHROPIC_API_KEY non configurata nel file .env del server' });
+    const client = new Anthropic({ apiKey });
+
+    const { image_base64 } = req.body;
+    if (!image_base64) return res.status(400).json({ ok:false, error:'Nessuna immagine fornita' });
+    const match = image_base64.match(/^data:(image\/[\w+]+);base64,(.+)$/);
+    if (!match) return res.status(400).json({ ok:false, error:'Formato immagine non valido' });
+
+    console.log('[F24-OCR] Invio pagina a Claude Vision...');
+    const timeoutPromise = new Promise((_,reject) =>
+      setTimeout(() => reject(new Error('Timeout OCR dopo 90 secondi')), 90000)
+    );
+
+    const response = await Promise.race([timeoutPromise, client.messages.create({
+      model: 'claude-opus-4-5',
+      max_tokens: 2000,
+      messages: [{
+        role: 'user',
+        content: [
+          { type:'image', source:{ type:'base64', media_type:match[1], data:match[2] } },
+          { type:'text', text:`Analizza questa immagine di un modulo F24 italiano (generato da software gestionale come Zucchetti).
+
+Estrai TUTTI i dati compilati e rispondi ESCLUSIVAMENTE in formato JSON valido:
+
+{
+  "dataVersamento": "data in formato DDMMAAAA es. 16042026, null se non presente",
+  "erario": [
+    ["codTributo", "rateazione", "annoRif", "importoDebiti", "importoCrediti"]
+  ],
+  "inps": [
+    ["sede", "causale", "matricola", "periodoDa", "periodoA", "importoDebiti", "importoCrediti"]
+  ],
+  "regioni": [
+    ["codRegione", "codTributo", "rateazione", "annoRif", "importoDebiti", "importoCrediti"]
+  ],
+  "imu": [
+    ["codComune", "numImmobili", "flagAcconto", "flagSaldo", "flagVariazione", "flagAE", "detrazione", "codTributo", "rateazione", "annoRif", "importoDebiti", "importoCrediti"]
+  ]
+}
+
+REGOLE:
+- Includi SOLO righe con dati compilati, non righe vuote
+- importoDebiti/Crediti: stringa formato italiano es. "1.234,56" oppure "" se zero/vuoto
+- rateazione: stringa es. "0101" oppure "" se vuota
+- flagAcconto/Saldo/Variazione/AE (solo IMU): "1" se casella barrata, "0" altrimenti
+- numImmobili (IMU): stringa numerica intera es. "1"
+- detrazione (IMU): importo es. "200,00" oppure "0,00"
+- codComune (IMU): 4 caratteri alfanumerici es. "A652"
+- Se una sezione non ha righe compilate: array vuoto []
+- Rispondi SOLO con il JSON, zero markdown, zero commenti` }
+        ]
+      }]
+    })]);
+
+    const text = response.content[0].text.trim();
+    console.log('[F24-OCR] Risposta Claude:', text.substring(0,300));
+    const jsonStr = text.replace(/^```json?\s*/i,'').replace(/\s*```$/i,'').trim();
+    let data;
+    try { data = JSON.parse(jsonStr); }
+    catch(e) { return res.status(422).json({ ok:false, error:'Errore parsing risposta Claude', raw:text }); }
+
+    data.erario  = data.erario  || [];
+    data.inps    = data.inps    || [];
+    data.regioni = data.regioni || [];
+    data.imu     = data.imu     || [];
+    if (!data.dataVersamento) data.dataVersamento = '';
+
+    console.log(`[F24-OCR] erario=${data.erario.length} inps=${data.inps.length} regioni=${data.regioni.length} imu=${data.imu.length}`);
+    res.json({ ok:true, data });
+
+  } catch(e) {
+    console.error('[F24-OCR] Errore:', e.message);
+    res.status(500).json({ ok:false, error:e.message });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

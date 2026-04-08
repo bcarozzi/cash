@@ -2663,6 +2663,9 @@ _opLoaded = true; loadOperazioni();
     </div>
   </div>
 
+  <!-- Modulo tabs (visible only when >1 modulo) -->
+  <div id="f24-mod-tabs" style="display:none;gap:10px;align-items:center;margin-bottom:4px;flex-wrap:wrap"></div>
+
   <!-- ERARIO -->
   <div class="card">
     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
@@ -2703,8 +2706,10 @@ _opLoaded = true; loadOperazioni();
 </div><!-- end tab-f24 -->
 
 <script>
-// ── F24 state ────────────────────────────────────────────────────────────────
-const f24S = { dataVersamento:'', erario:[], inps:[], regioni:[], imu:[] };
+// ── F24 state (multi-modulo) ──────────────────────────────────────────────────
+let f24S = { dataVersamento:'', erario:[], inps:[], regioni:[], imu:[] };
+let f24Moduli = [f24S];
+let f24ModIdx = 0;
 
 const F24_DEF = {
   erario:  { cols:['Cod.Tributo','Rata/Prov','Anno','Importo Deb','Importo Cred'],       ws:['90px','80px','70px','130px','130px'],   def:()=>['','','','',''] },
@@ -2712,6 +2717,43 @@ const F24_DEF = {
   regioni: { cols:['Cod.Reg','Tributo','Rateaz','Anno','Importo Deb','Importo Cred'],     ws:['60px','70px','70px','70px','130px','130px'], def:()=>['','','','','',''] },
   imu:     { cols:['Comune','N.Imm','Acc','Saldo','Var','Ravv','Detraz','Cod.Trib','Rata','Anno','Importo Deb','Importo Cred'], ws:['62px','48px','35px','40px','35px','40px','80px','70px','60px','60px','120px','120px'], def:()=>['',0,'0','0','0','0','0,00','','','','',''] }
 };
+
+// ── Modulo navigation ─────────────────────────────────────────────────────────
+function f24SwitchModulo(idx) {
+  f24ModIdx = idx;
+  f24S = f24Moduli[idx];
+  const dv = document.getElementById('f24-dv');
+  if (dv) dv.value = f24S.dataVersamento || '';
+  f24RenderModTabs();
+  f24Render();
+}
+
+function f24RenderModTabs() {
+  const el = document.getElementById('f24-mod-tabs');
+  if (!el) return;
+  if (f24Moduli.length <= 1) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  const toC = v => { v=String(v||'').trim(); if(!v)return 0; return parseInt(v.replace(/\./g,'').replace(',',''))||0; };
+  const debIdx = { erario:3, inps:5, regioni:4, imu:10 };
+  let h = '<span style="font-size:12px;color:var(--muted);white-space:nowrap">Moduli:</span>';
+  f24Moduli.forEach((m, i) => {
+    let deb=0, cred=0;
+    for (const sec of ['erario','inps','regioni','imu']) {
+      const di=debIdx[sec];
+      (m[sec]||[]).forEach(r=>{ deb+=toC(r[di]); cred+=toC(r[di+1]); });
+    }
+    const saldo=(deb-cred)/100;
+    const sStr = '€ '+saldo.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const active = i === f24ModIdx;
+    h += `<button onclick="f24SwitchModulo(${i})"
+      style="padding:6px 14px;border-radius:6px;border:1px solid ${active?'var(--accent)':'var(--border)'};
+             background:${active?'var(--accent)':'var(--panel2)'};color:${active?'#fff':'var(--text)'};
+             cursor:pointer;font-size:12px;font-weight:${active?'600':'400'}">
+      Modulo ${i+1} &mdash; ${sStr}
+    </button>`;
+  });
+  el.innerHTML = h;
+}
 
 // ── Render ────────────────────────────────────────────────────────────────────
 function f24Render() {
@@ -2746,7 +2788,7 @@ function f24AddRow(sec) { f24S[sec].push(F24_DEF[sec].def()); f24RenderTable(sec
 function f24RemRow(sec,ri) { f24S[sec].splice(ri,1); f24RenderTable(sec); f24UpdateSaldo(); }
 
 function f24UpdateSaldo() {
-  const toC = s => { s=String(s||'').trim(); if(!s)return 0; return parseInt(s.replace(/\./g,'').replace(',',''))||0; };
+  const toC = v => { v=String(v||'').trim(); if(!v)return 0; return parseInt(v.replace(/\./g,'').replace(',',''))||0; };
   const debIdx = { erario:3, inps:5, regioni:4, imu:10 };
   let deb=0, cred=0;
   for (const sec of ['erario','inps','regioni','imu']) {
@@ -2759,7 +2801,7 @@ function f24UpdateSaldo() {
   el.style.color = saldo>=0?'var(--green)':'var(--red)';
 }
 
-// ── PDF parse ─────────────────────────────────────────────────────────────────
+// ── PDF load via Claude Vision ─────────────────────────────────────────────────
 async function f24LoadPdf(file) {
   if (!file) return;
   const dz = document.getElementById('f24-dropzone');
@@ -2770,76 +2812,79 @@ async function f24LoadPdf(file) {
       'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
     const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
-    let text = '';
-    for (let pg=1; pg<=pdf.numPages; pg++) {
+    const nPages = pdf.numPages;
+    const moduli = [];
+
+    for (let pg = 1; pg <= nPages; pg++) {
+      dz.innerHTML = `<div style="color:var(--orange);font-size:13px">⏳ Analisi pagina ${pg}/${nPages} con Claude Vision...</div>`;
       const page = await pdf.getPage(pg);
-      const content = await page.getTextContent();
-      // Group items by Y coordinate, sort within line by X
-      const lineMap = new Map();
-      for (const item of content.items) {
-        if (!item.str.trim()) continue;
-        const y = Math.round(item.transform[5]);
-        if (!lineMap.has(y)) lineMap.set(y,[]);
-        lineMap.get(y).push({x:item.transform[4], s:item.str});
-      }
-      const lines = [...lineMap.entries()]
-        .sort((a,b)=>b[0]-a[0])
-        .map(([,it])=>it.sort((a,b)=>a.x-b.x).map(i=>i.s).join(' '));
-      text += lines.join('\n')+'\n';
+      const viewport = page.getViewport({ scale: 2.0 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      const imageBase64 = canvas.toDataURL('image/jpeg', 0.9);
+
+      const resp = await fetch('/api/f24/ocr-page', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ image_base64: imageBase64 })
+      });
+      if (!resp.ok) throw new Error(`Pagina ${pg}: ${await resp.text()}`);
+      const result = await resp.json();
+      if (!result.ok) throw new Error(`Pagina ${pg}: ${result.error}`);
+      moduli.push(result.data);
     }
 
-    const parsed = f24ParseText(text);
-    Object.assign(f24S, parsed);
-    if (parsed.dataVersamento) document.getElementById('f24-dv').value = parsed.dataVersamento;
+    f24Moduli = moduli;
+    f24ModIdx = 0;
+    f24S = f24Moduli[0];
+    const dv = document.getElementById('f24-dv');
+    if (dv) dv.value = f24S.dataVersamento || '';
+    f24RenderModTabs();
     f24Render();
 
-    const imuN=parsed.imu.length, erN=parsed.erario.length, inN=parsed.inps.length, rgN=parsed.regioni.length;
+    const toC = v => { v=String(v||'').trim(); if(!v)return 0; return parseInt(v.replace(/\./g,'').replace(',',''))||0; };
+    const debIdx = { erario:3, inps:5, regioni:4, imu:10 };
+    const totale = moduli.reduce((acc, m) => {
+      for (const sec of ['erario','inps','regioni','imu']) {
+        const di=debIdx[sec];
+        (m[sec]||[]).forEach(r=>{ acc+=toC(r[di])-toC(r[di+1]); });
+      }
+      return acc;
+    }, 0)/100;
+
     dz.innerHTML = `<div style="color:var(--green);font-weight:600">✓ ${file.name}</div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px">
-        IMU: ${imuN} | Erario: ${erN} | INPS: ${inN} | Regioni: ${rgN}
+        ${nPages} moduli — Totale: € ${totale.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})}
       </div>`;
   } catch(e) {
     dz.innerHTML = `<div style="color:var(--red)">❌ ${e.message}</div>`;
   }
 }
 
-function f24ParseText(text) {
-  const r = { dataVersamento:'', erario:[], inps:[], regioni:[], imu:[] };
-  const sm = text.match(/Scadenza\s+(\d{2})\/(\d{2})\/(\d{4})/);
-  if (sm) r.dataVersamento = sm[1]+sm[2]+sm[3];
-
-  for (const line of text.split('\n').map(l=>l.trim()).filter(l=>l)) {
-    // IMU: lettera + 3 cifre (spaziati) + codTrib(4) + rata(4) + anno(4) + intero spazio 2cifre
-    const imu = line.match(/^([A-Z] \d \d \d)\s+(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d+)\s+(\d{2})$/);
-    if (imu) { r.imu.push([imu[1].replace(/ /g,''),0,'0','0','0','0','0,00',imu[2],imu[3],imu[4],imu[5]+','+imu[6],'']); continue; }
-    // ERARIO con rata: TTTT RRRR AAAA INT CC
-    const er = line.match(/^(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d+)\s+(\d{2})$/);
-    if (er) { r.erario.push([er[1],er[2],er[3],er[4]+','+er[5],'']); continue; }
-    // ERARIO senza rata: TTTT AAAA INT CC
-    const er2 = line.match(/^(\d{4})\s+(\d{4})\s+(\d+)\s+(\d{2})$/);
-    if (er2 && +er2[2]>1900 && +er2[2]<2100) { r.erario.push([er2[1],'',er2[2],er2[3]+','+er2[4],'']); continue; }
-    // REGIONI: RR TTTT RRRR AAAA INT CC
-    const reg = line.match(/^(\d{2})\s+(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d+)\s+(\d{2})$/);
-    if (reg && +reg[1]>=1 && +reg[1]<=20) { r.regioni.push([reg[1],reg[2],reg[3],reg[4],reg[5]+','+reg[6],'']); }
-  }
-  return r;
-}
-
-// ── Genera ────────────────────────────────────────────────────────────────────
+// ── Genera (tutti i moduli) ───────────────────────────────────────────────────
 async function f24Genera() {
-  try {
-    const resp = await fetch('/api/f24/genera-txt', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(f24S)
-    });
-    if (!resp.ok) { alert('Errore server: '+await resp.text()); return; }
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const dv = f24S.dataVersamento;
-    a.href=url; a.download=`F24_${dv||'output'}.txt`; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
-  } catch(e) { alert('Errore: '+e.message); }
+  for (let i = 0; i < f24Moduli.length; i++) {
+    const mod = f24Moduli[i];
+    try {
+      const resp = await fetch('/api/f24/genera-txt', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(mod)
+      });
+      if (!resp.ok) { alert('Errore modulo '+(i+1)+': '+await resp.text()); continue; }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const dv = mod.dataVersamento;
+      const suffix = f24Moduli.length > 1 ? `_mod${i+1}` : '';
+      a.href = url;
+      a.download = `F24${suffix}_${dv||'output'}.txt`;
+      a.click();
+      await new Promise(r => setTimeout(r, 400));
+      URL.revokeObjectURL(url);
+    } catch(e) { alert('Errore modulo '+(i+1)+': '+e.message); }
+  }
 }
 </script>
 
