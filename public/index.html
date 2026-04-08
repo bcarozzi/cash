@@ -2869,31 +2869,106 @@ async function f24LoadPdf(file) {
   }
 }
 
-// ── Genera modulo corrente (o unico) ─────────────────────────────────────────
-async function f24Genera() {
-  await f24GeraModulo(f24ModIdx);
-}
+// ── Genera F24 in-browser (nessun fetch, download sincrono) ──────────────────
+const F24_FIXED = {cf:'12520320156',denominazione:'AEC INTERNATIONAL S.R.L.',comune:'LAINATE',prov:'MI',indirizzo:'VIA NERVIANO 55',cap:'20020'};
 
-async function f24GeraModulo(idx) {
+function _f24an(v,l){return String(v||'').toUpperCase().slice(0,l).padEnd(l);}
+function _f24nu(v,l){let n=0;try{n=Math.abs(parseInt(String(v||'0').trim())||0);}catch(e){}return String(n).padStart(l,'0').slice(-l);}
+function _f24euro(s){s=String(s||'').trim();if(!s)return 0;return parseInt(s.replace(/\./g,'').replace(',',''))||0;}
+function _f24c15(c){return String(Math.abs(Math.round(c))).padStart(15,'0').slice(-15);}
+function _f24itfmt(c){const n=Math.abs(Math.round(c)),e=Math.floor(n/100),d=n%100;return e.toLocaleString('it-IT')+','+String(d).padStart(2,'0');}
+function _f24tot(dc){const td=dc.reduce((s,[d])=>s+d,0),tc=dc.reduce((s,[,c])=>s+c,0),sa=td-tc;return[td,tc,(td===0&&tc===0)?' ':(sa>=0?'P':'N'),Math.abs(sa)];}
+function _f24w(b,p,t){for(let i=0;i<t.length;i++)b[p+i]=t[i];}
+function _f24end(b){return b.join('')+'A\r\n';}
+
+function _genRecordA(c){
+  const b=Array(1897).fill(' ');b[0]='A';
+  _f24w(b,15,_f24an('F24A0',5));_f24w(b,20,_f24an('14',2));_f24w(b,22,_f24an(c.cf,16));
+  _f24w(b,83,_f24nu(0,8));_f24w(b,210,_f24nu(0,5));
+  _f24w(b,215,_f24an(c.denominazione,60));_f24w(b,275,_f24an(c.comune,40));
+  _f24w(b,315,_f24an(c.prov,2));_f24w(b,317,_f24an(c.indirizzo,35));_f24w(b,352,_f24nu(c.cap,5));
+  _f24w(b,357,_f24an(c.comune,40));_f24w(b,397,_f24an(c.prov,2));_f24w(b,399,_f24an(c.indirizzo,35));_f24w(b,434,_f24nu(c.cap,5));
+  _f24w(b,521,_f24nu(1,3));_f24w(b,524,_f24nu(1,3));
+  return _f24end(b);
+}
+function _genRecordM(c,saldo){
+  const b=Array(1897).fill(' ');b[0]='M';
+  _f24w(b,1,_f24an(c.cf,16));_f24w(b,17,_f24nu(1,8));
+  b[90]='E';b[91]='0';b[92]='0';b[109]='0';
+  _f24w(b,155,_f24nu(0,8));_f24w(b,247,_f24nu(0,5));
+  _f24w(b,287,_f24an(c.comune,40));_f24w(b,327,_f24an(c.prov,2));
+  _f24w(b,329,_f24nu(c.cap,5));_f24w(b,334,_f24an(c.indirizzo,35));
+  _f24w(b,481,_f24nu(0,8));_f24w(b,517,_f24an(c.denominazione,55));
+  _f24w(b,1868,_f24an('EURO',4));_f24w(b,1872,_f24an(_f24itfmt(saldo),15));
+  const dv=c.dataVersamento;
+  _f24w(b,1887,_f24an(dv.slice(0,2)+'-'+dv.slice(2,4)+'-'+dv.slice(4,8),10));
+  return _f24end(b);
+}
+function _genRecordV(c){
+  const b=Array(1897).fill(' ');b[0]='V';
+  _f24w(b,1,_f24an(c.cf,16));_f24w(b,17,_f24nu(1,8));b[89]='A';_f24w(b,93,_f24nu(0,11));
+  const PE=[104,162,220,278,336,394];const eDc=[];
+  for(let i=0;i<6;i++){const p=PE[i];let dC=0,cC=0;
+    if(i<(c.erario||[]).length){const[ct,nr,an,ds,cs]=c.erario[i];dC=_f24euro(ds);cC=_f24euro(cs);
+      _f24w(b,p,_f24an(ct,4));_f24w(b,p+4,_f24an('',16));_f24w(b,p+20,_f24an(nr,4));_f24w(b,p+24,_f24an(an,4));_f24w(b,p+28,_f24c15(dC));_f24w(b,p+43,_f24c15(cC));
+    }else{_f24w(b,p+24,_f24nu(0,4));_f24w(b,p+28,_f24c15(0));_f24w(b,p+43,_f24c15(0));}
+    eDc.push([dC,cC]);}
+  const[etd,etc,es,esa]=_f24tot(eDc);_f24w(b,452,_f24c15(etd));_f24w(b,467,_f24c15(etc));b[482]=es;_f24w(b,483,_f24c15(esa));
+  const PI=[498,565,632,699];const iDc=[];
+  for(let i=0;i<4;i++){const p=PI[i];let dC=0,cC=0;
+    if(i<(c.inps||[]).length){const[sd,ca,ma,pd,pa,ds,cs]=c.inps[i];dC=_f24euro(ds);cC=_f24euro(cs);
+      _f24w(b,p,_f24an(sd,4));_f24w(b,p+4,_f24an(ca,4));_f24w(b,p+8,_f24an(ma,17));_f24w(b,p+25,_f24an(pd,6));_f24w(b,p+31,_f24nu(pa,6));_f24w(b,p+37,_f24c15(dC));_f24w(b,p+52,_f24c15(cC));
+    }else{_f24w(b,p,_f24nu(0,4));_f24w(b,p+25,_f24nu(0,6));_f24w(b,p+31,_f24nu(0,6));_f24w(b,p+37,_f24c15(0));_f24w(b,p+52,_f24c15(0));}
+    iDc.push([dC,cC]);}
+  const[itd,itc,is,isa]=_f24tot(iDc);_f24w(b,766,_f24c15(itd));_f24w(b,781,_f24c15(itc));b[796]=is;_f24w(b,797,_f24c15(isa));
+  const PR=[812,856,900,944];const rDc=[];
+  for(let i=0;i<4;i++){const p=PR[i];let dC=0,cC=0,act=false;
+    if(i<(c.regioni||[]).length){const[cr,tr,rz,an,ds,cs]=c.regioni[i];dC=_f24euro(ds);cC=_f24euro(cs);
+      if(dC||cC){act=true;_f24w(b,p,_f24an(cr,2));_f24w(b,p+2,_f24an(tr,4));_f24w(b,p+6,_f24an(rz,4));_f24w(b,p+10,_f24an(an,4));_f24w(b,p+14,_f24c15(dC));_f24w(b,p+29,_f24c15(cC));}}
+    if(!act){dC=cC=0;_f24w(b,p,_f24nu(0,2));_f24w(b,p+10,_f24nu(0,4));_f24w(b,p+14,_f24c15(0));_f24w(b,p+29,_f24c15(0));}
+    rDc.push([dC,cC]);}
+  const[rtd,rtc,rs,rsa]=_f24tot(rDc);_f24w(b,988,_f24c15(rtd));_f24w(b,1003,_f24c15(rtc));b[1018]=rs;_f24w(b,1019,_f24c15(rsa));
+  const PIM=[1052,1120,1188,1256];const mDc=[];
+  for(let i=0;i<4;i++){const p=PIM[i];let dC=0,cC=0;
+    if(i<(c.imu||[]).length){const[cc,ni,ac,sf,iv,ae,dt,ct,nr,an,ds,cs]=c.imu[i];dC=_f24euro(ds);cC=_f24euro(cs);const dtC=_f24euro(dt);
+      _f24w(b,p,_f24an(cc,4));b[p+4]=String(ae||'0')[0];b[p+5]=String(iv||'0')[0];b[p+6]=String(ac||'0')[0];b[p+7]=String(sf||'0')[0];
+      _f24w(b,p+8,_f24nu(ni,3));_f24w(b,p+11,_f24c15(dtC));_f24w(b,p+26,_f24an(ct,4));_f24w(b,p+30,_f24an(nr,4));_f24w(b,p+34,_f24an(an,4));_f24w(b,p+38,_f24c15(dC));_f24w(b,p+53,_f24c15(cC));
+    }else{b[p+4]='0';b[p+5]='0';b[p+6]='0';b[p+7]='0';_f24w(b,p+8,_f24nu(0,3));_f24w(b,p+11,_f24c15(0));_f24w(b,p+34,_f24nu(0,4));_f24w(b,p+38,_f24c15(0));_f24w(b,p+53,_f24c15(0));}
+    mDc.push([dC,cC]);}
+  const[mtd,mtc,ms,msa]=_f24tot(mDc);_f24w(b,1324,_f24c15(mtd));_f24w(b,1339,_f24c15(mtc));b[1354]=ms;_f24w(b,1355,_f24c15(msa));
+  for(const p of[1370,1422,1474]){_f24w(b,p,_f24nu(0,5));_f24w(b,p+5,_f24nu(0,8));_f24w(b,p+13,_f24nu(0,2));_f24w(b,p+15,_f24nu(0,6));_f24w(b,p+22,_f24c15(0));_f24w(b,p+37,_f24c15(0));}
+  _f24w(b,1526,_f24c15(0));_f24w(b,1541,_f24c15(0));b[1556]=' ';_f24w(b,1557,_f24c15(0));
+  _f24w(b,1572,_f24nu(0,4));
+  for(const p of[1576,1636]){_f24w(b,p+9,_f24nu(0,9));_f24w(b,p+18,_f24nu(0,6));_f24w(b,p+24,_f24nu(0,6));_f24w(b,p+30,_f24c15(0));_f24w(b,p+45,_f24c15(0));}
+  _f24w(b,1696,_f24c15(0));_f24w(b,1711,_f24c15(0));b[1726]=' ';_f24w(b,1727,_f24c15(0));
+  const allDc=[...eDc,...iDc,...rDc,...mDc];
+  const allDeb=allDc.reduce((s,[d])=>s+d,0),allCred=allDc.reduce((s,[,c])=>s+c,0);
+  _f24w(b,1792,_f24c15(Math.abs(allDeb-allCred)));_f24w(b,1807,_f24an(c.dataVersamento,8));
+  return[_f24end(b),allDeb-allCred];
+}
+function _genRecordZ(nV,nM){const b=Array(1897).fill(' ');b[0]='Z';_f24w(b,15,_f24nu(nV,9));_f24w(b,24,_f24nu(nM,9));return _f24end(b);}
+
+function f24Genera() { f24GeraModulo(f24ModIdx); }
+
+function f24GeraModulo(idx) {
   const mod = f24Moduli[idx];
   try {
-    const resp = await fetch('/api/f24/genera-txt', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(mod)
-    });
-    if (!resp.ok) { alert('Errore: '+await resp.text()); return; }
-    const blob = await resp.blob();
+    const cfg = Object.assign({}, F24_FIXED, mod);
+    const [vData, saldoNetto] = _genRecordV(cfg);
+    const content = _genRecordA(cfg) + _genRecordM(cfg, Math.abs(saldoNetto)) + vData + _genRecordZ(1,1);
+    const dv = cfg.dataVersamento || '00000000';
+    const suffix = f24Moduli.length > 1 ? `_mod${idx+1}` : '';
+    const fname = `F24${suffix}_${dv.slice(4,8)}${dv.slice(2,4)}${dv.slice(0,2)}.txt`;
+    const blob = new Blob([content], { type: 'text/plain;charset=ascii' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     document.body.appendChild(a);
     a.style.display = 'none';
-    const dv = mod.dataVersamento;
-    const suffix = f24Moduli.length > 1 ? `_mod${idx+1}` : '';
     a.href = url;
-    a.download = `F24${suffix}_${dv||'output'}.txt`;
+    a.download = fname;
     a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
-  } catch(e) { alert('Errore: '+e.message); }
+  } catch(e) { alert('Errore generazione: '+e.message); }
 }
 </script>
 
