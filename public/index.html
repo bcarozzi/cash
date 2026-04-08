@@ -2917,7 +2917,7 @@ function _genRecordV(c){
   const PI=[498,565,632,699];const iDc=[];
   for(let i=0;i<4;i++){const p=PI[i];let dC=0,cC=0;
     if(i<(c.inps||[]).length){const[sd,ca,ma,pd,pa,ds,cs]=c.inps[i];dC=_f24euro(ds);cC=_f24euro(cs);
-      _f24w(b,p,_f24an(sd,4));_f24w(b,p+4,_f24an(ca,4));_f24w(b,p+8,_f24an(ma,17));_f24w(b,p+25,_f24an(pd,6));_f24w(b,p+31,_f24nu(pa,6));_f24w(b,p+37,_f24c15(dC));_f24w(b,p+52,_f24c15(cC));
+      _f24w(b,p,_f24an(sd,4));_f24w(b,p+4,_f24an(ca,4));_f24w(b,p+8,_f24an(ma,17));_f24w(b,p+25,_f24an(pd,6));_f24w(b,p+31,'000000');_f24w(b,p+37,_f24c15(dC));_f24w(b,p+52,_f24c15(cC));
     }else{_f24w(b,p,_f24nu(0,4));_f24w(b,p+25,_f24nu(0,6));_f24w(b,p+31,_f24nu(0,6));_f24w(b,p+37,_f24c15(0));_f24w(b,p+52,_f24c15(0));}
     iDc.push([dC,cC]);}
   const[itd,itc,is,isa]=_f24tot(iDc);_f24w(b,766,_f24c15(itd));_f24w(b,781,_f24c15(itc));b[796]=is;_f24w(b,797,_f24c15(isa));

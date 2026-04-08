@@ -1062,7 +1062,7 @@ function genRecordV(c){
   const PI=[498,565,632,699];const iDc=[];
   for(let i=0;i<4;i++){const p=PI[i];let dC=0,cC=0;
     if(i<(c.inps||[]).length){const[sd,ca,ma,pd,pa,ds,cs]=c.inps[i];dC=f24euro(ds);cC=f24euro(cs);
-      f24w(b,p,f24an(sd,4));f24w(b,p+4,f24an(ca,4));f24w(b,p+8,f24an(ma,17));f24w(b,p+25,f24an(pd,6));f24w(b,p+31,f24nu(pa,6));f24w(b,p+37,f24c15(dC));f24w(b,p+52,f24c15(cC));
+      f24w(b,p,f24an(sd,4));f24w(b,p+4,f24an(ca,4));f24w(b,p+8,f24an(ma,17));f24w(b,p+25,f24an(pd,6));f24w(b,p+31,'000000');f24w(b,p+37,f24c15(dC));f24w(b,p+52,f24c15(cC));
     }else{f24w(b,p,f24nu(0,4));f24w(b,p+25,f24nu(0,6));f24w(b,p+31,f24nu(0,6));f24w(b,p+37,f24c15(0));f24w(b,p+52,f24c15(0));}
     iDc.push([dC,cC]);}
   const[itd,itc,is,isa]=f24tot(iDc);f24w(b,766,f24c15(itd));f24w(b,781,f24c15(itc));b[796]=is;f24w(b,797,f24c15(isa));
