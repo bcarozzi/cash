@@ -2745,12 +2745,18 @@ function f24RenderModTabs() {
     const saldo=(deb-cred)/100;
     const sStr = '€ '+saldo.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
     const active = i === f24ModIdx;
-    h += `<button onclick="f24SwitchModulo(${i})"
-      style="padding:6px 14px;border-radius:6px;border:1px solid ${active?'var(--accent)':'var(--border)'};
-             background:${active?'var(--accent)':'var(--panel2)'};color:${active?'#fff':'var(--text)'};
-             cursor:pointer;font-size:12px;font-weight:${active?'600':'400'}">
-      Modulo ${i+1} &mdash; ${sStr}
-    </button>`;
+    h += `<span style="display:inline-flex;border-radius:6px;overflow:hidden;border:1px solid ${active?'var(--accent)':'var(--border)'}">
+      <button onclick="f24SwitchModulo(${i})"
+        style="padding:6px 14px;border:none;
+               background:${active?'var(--accent)':'var(--panel2)'};color:${active?'#fff':'var(--text)'};
+               cursor:pointer;font-size:12px;font-weight:${active?'600':'400'}">
+        Modulo ${i+1} &mdash; ${sStr}
+      </button>
+      <button onclick="f24GeraModulo(${i})"
+        style="padding:6px 10px;border:none;border-left:1px solid ${active?'rgba(255,255,255,.3)':'var(--border)'};
+               background:${active?'var(--accent)':'var(--panel2)'};color:${active?'#fff':'var(--muted)'};
+               cursor:pointer;font-size:13px" title="Scarica Modulo ${i+1}">⬇</button>
+    </span>`;
   });
   el.innerHTML = h;
 }
@@ -2863,28 +2869,31 @@ async function f24LoadPdf(file) {
   }
 }
 
-// ── Genera (tutti i moduli) ───────────────────────────────────────────────────
+// ── Genera modulo corrente (o unico) ─────────────────────────────────────────
 async function f24Genera() {
-  for (let i = 0; i < f24Moduli.length; i++) {
-    const mod = f24Moduli[i];
-    try {
-      const resp = await fetch('/api/f24/genera-txt', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(mod)
-      });
-      if (!resp.ok) { alert('Errore modulo '+(i+1)+': '+await resp.text()); continue; }
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const dv = mod.dataVersamento;
-      const suffix = f24Moduli.length > 1 ? `_mod${i+1}` : '';
-      a.href = url;
-      a.download = `F24${suffix}_${dv||'output'}.txt`;
-      a.click();
-      await new Promise(r => setTimeout(r, 400));
-      URL.revokeObjectURL(url);
-    } catch(e) { alert('Errore modulo '+(i+1)+': '+e.message); }
-  }
+  await f24GeraModulo(f24ModIdx);
+}
+
+async function f24GeraModulo(idx) {
+  const mod = f24Moduli[idx];
+  try {
+    const resp = await fetch('/api/f24/genera-txt', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(mod)
+    });
+    if (!resp.ok) { alert('Errore: '+await resp.text()); return; }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    document.body.appendChild(a);
+    a.style.display = 'none';
+    const dv = mod.dataVersamento;
+    const suffix = f24Moduli.length > 1 ? `_mod${idx+1}` : '';
+    a.href = url;
+    a.download = `F24${suffix}_${dv||'output'}.txt`;
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  } catch(e) { alert('Errore: '+e.message); }
 }
 </script>
 
