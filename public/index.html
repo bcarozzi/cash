@@ -8,6 +8,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     :root {
       --bg:       #0d1525;
@@ -1548,7 +1549,11 @@ function renderSdi() {
       <td style="text-align:center;padding:8px 6px">
         <input type="checkbox" class="sdi-chk-row" data-id="${esc(f.id)}" data-importo="${f.importo}" onchange="aggiornaSelTotaleSdi()">
       </td>
-      <td style="font-size:12px;font-weight:500">${esc(f.nome)}</td>
+      <td style="font-size:12px;font-weight:500">
+        <span onclick="sdiShowFattura('${esc(f.cf)}','${esc(f.numdoc)}')"
+          style="cursor:pointer;border-bottom:1px dotted var(--accent);color:var(--accent)"
+          title="Vedi fattura XML">${esc(f.nome)}</span>
+      </td>
       <td style="font-size:11px;color:var(--muted)">${esc(f.numdoc)}</td>
       <td style="font-size:11px;color:var(--cyan);text-align:center">${f.rata_n ? `<span style="background:rgba(8,145,178,.15);border-radius:4px;padding:2px 6px">${f.rata_n}</span>` : ''}</td>
       <td class="mono" style="font-size:12px">${f.data_doc || '—'}</td>
@@ -2224,6 +2229,257 @@ Data pagamento (YYYY-MM-DD):`,
 loadData();
 _bancheLoaded = true; loadSaldiBanche();
 _opLoaded = true; loadOperazioni();
+
+// ─── VIEWER FATTURE XML (SDI) ─────────────────────────────
+let _sdiXmlMap = {};  // chiave: "piva_numdoc" e "piva"
+
+function _sdiNormKey(piva, numdoc) {
+  return (piva || '').replace(/\s/g,'').toUpperCase() + '_' +
+         (numdoc || '').trim().toUpperCase().replace(/\s+/g,'-');
+}
+
+async function sdiLoadZip(file) {
+  if (!file) return;
+  const badge = document.getElementById('sdi-xml-badge');
+  badge.style.display = 'inline';
+  badge.textContent = '⏳ Caricamento...';
+  badge.style.color = 'var(--orange)';
+  badge.style.borderColor = 'var(--orange)';
+
+  try {
+    _sdiXmlMap = {};
+    let count = 0;
+
+    // Funzione per processare un XML string
+    const processXml = (xmlStr) => {
+      const d = _sdiParseXml(xmlStr);
+      if (!d || !d.piva) return;
+      const key = _sdiNormKey(d.piva, d.numero);
+      _sdiXmlMap[key] = d;
+      _sdiXmlMap[d.piva.toUpperCase()] = d; // fallback solo piva
+      count++;
+    };
+
+    if (!window.JSZip) throw new Error('JSZip non caricato');
+    const zip = await JSZip.loadAsync(file);
+
+    for (const [name, entry] of Object.entries(zip.files)) {
+      if (entry.dir || name.includes('_metaDato')) continue;
+
+      if (name.endsWith('.xml')) {
+        const xmlStr = await entry.async('text');
+        processXml(xmlStr);
+      } else if (name.endsWith('.xml.p7m') || name.endsWith('.p7m')) {
+        // Invia al server per estrazione
+        try {
+          const buf = await entry.async('arraybuffer');
+          const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+          const resp = await fetch('/api/fatture-sdi/parse-p7m', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({data: b64})
+          });
+          if (resp.ok) {
+            const r = await resp.json();
+            if (r.ok && r.xml) processXml(r.xml);
+          }
+        } catch(e) { console.warn('P7M skip:', name, e.message); }
+      }
+    }
+
+    badge.textContent = `✓ ${count} fatture XML`;
+    badge.style.color = 'var(--green)';
+    badge.style.borderColor = 'var(--green)';
+  } catch(e) {
+    badge.textContent = '❌ ' + e.message;
+    badge.style.color = 'var(--red)';
+    badge.style.borderColor = 'var(--red)';
+  }
+}
+
+function _sdiParseXml(xmlStr) {
+  try {
+    const doc = new DOMParser().parseFromString(xmlStr, 'text/xml');
+    const g = (tag) => {
+      const els = doc.getElementsByTagName(tag);
+      return els.length ? els[0].textContent.trim() : '';
+    };
+    const all = (tag) => [...doc.getElementsByTagName(tag)].map(e => e.textContent.trim());
+
+    // P.IVA cedente (fornitore) — secondo IdCodice (il primo è il trasmittente)
+    const idCodici = all('IdCodice');
+    const piva = idCodici[1] || idCodici[0] || '';
+
+    const denominazioni = all('Denominazione');
+    const fornitore = denominazioni[0] || '';
+
+    // Indirizzo cedente
+    const sediEl = doc.getElementsByTagName('Sede');
+    const sedeFor = sediEl[0];
+    const indirizzo = sedeFor ? [
+      sedeFor.querySelector ? (sedeFor.getElementsByTagName('Indirizzo')[0]?.textContent || '') : '',
+      sedeFor.getElementsByTagName('Comune')[0]?.textContent || '',
+      sedeFor.getElementsByTagName('Provincia')[0]?.textContent || ''
+    ].filter(Boolean).join(', ') : '';
+
+    const tipo = g('TipoDocumento');
+    const data = g('Data');
+    const numero = g('Numero');
+    const totale = g('ImportoTotaleDocumento');
+
+    // Righe
+    const righe = [...doc.getElementsByTagName('DettaglioLinee')].map(el => ({
+      n:    el.getElementsByTagName('NumeroLinea')[0]?.textContent || '',
+      desc: el.getElementsByTagName('Descrizione')[0]?.textContent || '',
+      qta:  el.getElementsByTagName('Quantita')[0]?.textContent || '',
+      um:   el.getElementsByTagName('UnitaMisura')[0]?.textContent || '',
+      pu:   el.getElementsByTagName('PrezzoUnitario')[0]?.textContent || '',
+      tot:  el.getElementsByTagName('PrezzoTotale')[0]?.textContent || '',
+      iva:  el.getElementsByTagName('AliquotaIVA')[0]?.textContent || ''
+    }));
+
+    // Riepilogo
+    const riepilogo = [...doc.getElementsByTagName('DatiRiepilogo')].map(el => ({
+      iva:     el.getElementsByTagName('AliquotaIVA')[0]?.textContent || '',
+      impon:   el.getElementsByTagName('ImponibileImporto')[0]?.textContent || '',
+      imposta: el.getElementsByTagName('Imposta')[0]?.textContent || ''
+    }));
+
+    // Pagamento
+    const dp = doc.getElementsByTagName('DettaglioPagamento')[0];
+    const pagamento = dp ? {
+      modalita: dp.getElementsByTagName('ModalitaPagamento')[0]?.textContent || '',
+      scadenza: dp.getElementsByTagName('DataScadenzaPagamento')[0]?.textContent || '',
+      importo:  dp.getElementsByTagName('ImportoPagamento')[0]?.textContent || '',
+      iban:     dp.getElementsByTagName('IBAN')[0]?.textContent || '',
+      banca:    dp.getElementsByTagName('IstitutoFinanziario')[0]?.textContent || ''
+    } : null;
+
+    return { piva, fornitore, indirizzo, tipo, data, numero, totale, righe, riepilogo, pagamento };
+  } catch(e) {
+    console.warn('Errore parse XML:', e.message);
+    return null;
+  }
+}
+
+const _MODALITA_PAG = {
+  MP01:'Contanti', MP02:'Assegno', MP05:'Bonifico', MP08:'Carta di pagamento',
+  MP12:'Riba', MP19:'SEPA Bonifico', MP20:'SEPA Addebito diretto', MP21:'Bonifico + Ricevuta Bancaria'
+};
+const _TIPO_DOC = {
+  TD01:'Fattura', TD02:'Acconto su fattura', TD04:'Nota credito', TD06:'Parcella', TD17:'Integrazione IVA', TD24:'Fattura differita'
+};
+
+function sdiShowFattura(cf, numdoc) {
+  const key = _sdiNormKey(cf, numdoc);
+  let d = _sdiXmlMap[key] || _sdiXmlMap[(cf||'').toUpperCase()];
+
+  const modal = document.getElementById('sdi-modal');
+  const body  = document.getElementById('sdi-modal-body');
+
+  if (!d) {
+    body.innerHTML = `
+      <div style="text-align:center;padding:40px;color:var(--muted)">
+        <div style="font-size:36px;margin-bottom:12px">📂</div>
+        <div style="font-size:14px">Fattura XML non trovata</div>
+        <div style="font-size:12px;margin-top:8px;color:var(--dim)">
+          Carica il file ZIP con "📂 Carica XML" per visualizzare le fatture
+        </div>
+      </div>`;
+    modal.style.display = 'block';
+    return;
+  }
+
+  const fmtI = v => { const n = parseFloat(v||0); return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  const tipoLabel = _TIPO_DOC[d.tipo] || d.tipo;
+  const dataFmt = d.data ? d.data.split('-').reverse().join('/') : '—';
+  const modPag = _MODALITA_PAG[d.pagamento?.modalita] || d.pagamento?.modalita || '';
+  const scadFmt = d.pagamento?.scadenza ? d.pagamento.scadenza.split('-').reverse().join('/') : '';
+
+  let righeHtml = '';
+  if (d.righe.length) {
+    righeHtml = `
+    <div style="margin:16px 0 4px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Righe</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="text-align:left;padding:5px 6px;color:var(--muted)">#</th>
+        <th style="text-align:left;padding:5px 6px;color:var(--muted)">Descrizione</th>
+        <th style="text-align:right;padding:5px 6px;color:var(--muted)">Qtà</th>
+        <th style="text-align:right;padding:5px 6px;color:var(--muted)">P.Unit.</th>
+        <th style="text-align:right;padding:5px 6px;color:var(--muted)">Totale</th>
+        <th style="text-align:right;padding:5px 6px;color:var(--muted)">IVA%</th>
+      </tr></thead><tbody>`;
+    d.righe.forEach(r => {
+      righeHtml += `<tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+        <td style="padding:5px 6px;color:var(--muted)">${r.n}</td>
+        <td style="padding:5px 6px">${r.desc}</td>
+        <td style="padding:5px 6px;text-align:right;font-family:'DM Mono',monospace">${r.qta} ${r.um}</td>
+        <td style="padding:5px 6px;text-align:right;font-family:'DM Mono',monospace">€ ${fmtI(r.pu)}</td>
+        <td style="padding:5px 6px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">€ ${fmtI(r.tot)}</td>
+        <td style="padding:5px 6px;text-align:right;color:var(--muted)">${r.iva}%</td>
+      </tr>`;
+    });
+    righeHtml += '</tbody></table>';
+  }
+
+  let riepilogoHtml = '';
+  if (d.riepilogo.length) {
+    riepilogoHtml = `<div style="display:flex;gap:16px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap">`;
+    d.riepilogo.forEach(r => {
+      riepilogoHtml += `
+        <div style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:8px 14px;text-align:right;min-width:130px">
+          <div style="font-size:10px;color:var(--muted)">Imponibile IVA ${r.iva}%</div>
+          <div style="font-family:'DM Mono',monospace;font-size:13px">€ ${fmtI(r.impon)}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">IVA: € ${fmtI(r.imposta)}</div>
+        </div>`;
+    });
+    riepilogoHtml += `
+      <div style="background:var(--panel3);border:1px solid var(--border);border-radius:6px;padding:8px 14px;text-align:right;min-width:130px">
+        <div style="font-size:10px;color:var(--muted)">TOTALE</div>
+        <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--red)">€ ${fmtI(d.totale)}</div>
+      </div>`;
+    riepilogoHtml += '</div>';
+  }
+
+  let pagHtml = '';
+  if (d.pagamento) {
+    pagHtml = `
+    <div style="margin-top:16px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px 16px">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Pagamento</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px">
+        ${modPag ? `<div><span style="color:var(--muted)">Modalità:</span> ${modPag}</div>` : ''}
+        ${scadFmt ? `<div><span style="color:var(--muted)">Scadenza:</span> <strong style="color:var(--orange)">${scadFmt}</strong></div>` : ''}
+        ${d.pagamento.importo ? `<div><span style="color:var(--muted)">Importo:</span> € ${fmtI(d.pagamento.importo)}</div>` : ''}
+        ${d.pagamento.banca ? `<div><span style="color:var(--muted)">Banca:</span> ${d.pagamento.banca}</div>` : ''}
+      </div>
+      ${d.pagamento.iban ? `<div style="margin-top:8px;font-family:'DM Mono',monospace;font-size:11px;color:var(--green)">${d.pagamento.iban}</div>` : ''}
+    </div>`;
+  }
+
+  body.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:16px;font-weight:700">${d.fornitore}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">P.IVA: ${d.piva}${d.indirizzo ? ' · '+d.indirizzo : ''}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:11px;color:var(--muted)">${tipoLabel}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600">N. ${d.numero}</div>
+        <div style="font-size:12px;color:var(--muted)">${dataFmt}</div>
+      </div>
+    </div>
+    ${righeHtml}
+    ${riepilogoHtml}
+    ${pagHtml}`;
+
+  modal.style.display = 'block';
+}
+
+function sdiCloseModal() {
+  document.getElementById('sdi-modal').style.display = 'none';
+}
+
+document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal(); });
 </script>
 
 
@@ -2503,6 +2759,9 @@ _opLoaded = true; loadOperazioni();
       💸 Fatture da Pagare
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn-add" onclick="ricaricaSdi()" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">🔄 Aggiorna</button>
+        <button class="btn-add" onclick="document.getElementById('sdi-xml-input').click()" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)" title="Carica ZIP con fatture XML da AE">📂 Carica XML</button>
+        <input type="file" id="sdi-xml-input" accept=".zip,.xml,.p7m" style="display:none" onchange="sdiLoadZip(this.files[0])">
+        <span id="sdi-xml-badge" style="display:none;font-size:11px;color:var(--green);background:rgba(34,197,94,.1);border:1px solid var(--green);border-radius:12px;padding:2px 10px"></span>
         <button class="btn-add" onclick="selectAllSdi(true)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Seleziona tutti</button>
         <button class="btn-add" onclick="selectAllSdi(false)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Deseleziona</button>
         <button class="btn-add" onclick="exportSdiWiseCSV()" style="background:#2d6a4f;border:1px solid #40916c">⬇ Scarica CSV Wise</button>
@@ -2540,6 +2799,18 @@ _opLoaded = true; loadOperazioni();
   </div>
 </div>
 </div><!-- end tab-fatture-sdi -->
+
+<!-- MODAL: Dettaglio fattura XML -->
+<div id="sdi-modal" onclick="if(event.target===this)sdiCloseModal()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;overflow-y:auto;padding:20px">
+  <div style="max-width:780px;margin:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+    <div style="padding:14px 20px;background:var(--panel2);display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+      <span style="font-weight:600;font-size:15px">📄 Fattura Elettronica</span>
+      <button onclick="sdiCloseModal()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1">×</button>
+    </div>
+    <div id="sdi-modal-body" style="padding:20px"></div>
+  </div>
+</div>
 
 <!-- TAB: RID AUTOMATICI -->
 <div id="tab-rid" class="tab-content">

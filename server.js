@@ -933,6 +933,29 @@ app.post('/api/fatture-sdi/segna-pagate', (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── FATTURE SDI: estrai XML da P7M ─────────────────────────────────────────
+app.post('/api/fatture-sdi/parse-p7m', (req, res) => {
+  try {
+    const { data: b64 } = req.body;
+    if (!b64) return res.status(400).json({ ok:false, error:'Dati mancanti' });
+    const buf = Buffer.from(b64, 'base64');
+    // Cerca il marker di inizio XML nel binario P7M
+    let startIdx = -1;
+    for (const marker of ['<?xml', '<FatturaElettronica']) {
+      const idx = buf.indexOf(Buffer.from(marker));
+      if (idx !== -1 && (startIdx === -1 || idx < startIdx)) startIdx = idx;
+    }
+    if (startIdx === -1) return res.status(422).json({ ok:false, error:'XML non trovato nel P7M' });
+    const xmlPart = buf.slice(startIdx).toString('utf8');
+    const endTag = '</FatturaElettronica>';
+    const endIdx = xmlPart.lastIndexOf(endTag);
+    if (endIdx === -1) return res.status(422).json({ ok:false, error:'Tag di chiusura XML non trovato' });
+    res.json({ ok:true, xml: xmlPart.slice(0, endIdx + endTag.length) });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
 /// ─── FATTURE SDI: storico pagamenti ──────────────────────────────────────────
 app.get('/api/fatture-sdi/storico', (req, res) => {
   const data = loadData();
