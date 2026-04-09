@@ -1549,11 +1549,12 @@ function renderSdi() {
       <td style="text-align:center;padding:8px 6px">
         <input type="checkbox" class="sdi-chk-row" data-id="${esc(f.id)}" data-importo="${f.importo}" onchange="aggiornaSelTotaleSdi()">
       </td>
-      <td style="font-size:12px;font-weight:500">
-        <span onclick="sdiShowFattura('${esc(f.cf)}','${esc(f.numdoc)}')"
-          style="cursor:pointer;border-bottom:1px dotted var(--accent);color:var(--accent)"
-          title="Vedi fattura XML">${esc(f.nome)}</span>
-      </td>
+      <td style="font-size:12px;font-weight:500">${sdiHasXml(f.cf,f.numdoc)
+        ? `<span onclick="sdiShowFattura('${esc(f.cf)}','${esc(f.numdoc)}')"
+            style="cursor:pointer;border-bottom:1px dotted var(--accent);color:var(--accent)"
+            title="Vedi fattura XML">📄 ${esc(f.nome)}</span>`
+        : esc(f.nome)
+      }</td>
       <td style="font-size:11px;color:var(--muted)">${esc(f.numdoc)}</td>
       <td style="font-size:11px;color:var(--cyan);text-align:center">${f.rata_n ? `<span style="background:rgba(8,145,178,.15);border-radius:4px;padding:2px 6px">${f.rata_n}</span>` : ''}</td>
       <td class="mono" style="font-size:12px">${f.data_doc || '—'}</td>
@@ -2238,6 +2239,12 @@ function _sdiNormKey(piva, numdoc) {
          (numdoc || '').trim().toUpperCase().replace(/\s+/g,'-');
 }
 
+function sdiHasXml(cf, numdoc) {
+  if (!Object.keys(_sdiXmlMap).length) return false;
+  const key = _sdiNormKey(cf, numdoc);
+  return !!(  _sdiXmlMap[key] || _sdiXmlMap[(cf||'').toUpperCase()]);
+}
+
 async function sdiLoadZip(file) {
   if (!file) return;
   const badge = document.getElementById('sdi-xml-badge');
@@ -2290,6 +2297,7 @@ async function sdiLoadZip(file) {
     badge.textContent = `✓ ${count} fatture XML`;
     badge.style.color = 'var(--green)';
     badge.style.borderColor = 'var(--green)';
+    renderSdi(); // aggiorna stile fornitori con match
   } catch(e) {
     badge.textContent = '❌ ' + e.message;
     badge.style.color = 'var(--red)';
