@@ -933,6 +933,24 @@ app.post('/api/fatture-sdi/segna-pagate', (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── FATTURE SDI: dati XML persistenti ───────────────────────────────────────
+app.get('/api/fatture-sdi/xml-data', (req, res) => {
+  const data = loadData();
+  res.json({ xmlMap: data.fatture_xml || {} });
+});
+
+app.post('/api/fatture-sdi/save-xml-data', (req, res) => {
+  const { xmlMap } = req.body;
+  if (!xmlMap || typeof xmlMap !== 'object') return res.status(400).json({ error: 'xmlMap mancante' });
+  const data = loadData();
+  // Merge: aggiunge/aggiorna senza cancellare fatture precedenti
+  data.fatture_xml = Object.assign(data.fatture_xml || {}, xmlMap);
+  saveData(data);
+  const count = Object.keys(data.fatture_xml).length;
+  console.log(`[XML] Salvate ${count} fatture XML`);
+  res.json({ ok: true, count });
+});
+
 // ─── FATTURE SDI: estrai XML da P7M ─────────────────────────────────────────
 app.post('/api/fatture-sdi/parse-p7m', (req, res) => {
   try {

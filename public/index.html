@@ -1462,7 +1462,11 @@ function setSdiMese(offset) {
 async function loadFattureSdi() {
   document.getElementById('sdi-body').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">⏳ Caricamento fatture...</div>';
   try {
-    const res = await fetch('/api/fatture-sdi');
+    // Carica fatture e dati XML in parallelo
+    const [res, xmlRes] = await Promise.all([
+      fetch('/api/fatture-sdi'),
+      fetch('/api/fatture-sdi/xml-data')
+    ]);
     if (!res.ok) throw new Error('Server: ' + res.status);
     _sdiData = await res.json();
     // Ricostruisci override IBAN dai dati server (iban_manuale per cf)
@@ -1472,6 +1476,21 @@ async function loadFattureSdi() {
     const oggi = new Date().toISOString().slice(0,10);
     const dp = document.getElementById('sdi-data-pag');
     if (dp && !dp.value) dp.value = oggi;
+    // Carica dati XML salvati sul server
+    if (xmlRes.ok) {
+      const xmlData = await xmlRes.json();
+      if (xmlData.xmlMap && Object.keys(xmlData.xmlMap).length) {
+        _sdiXmlMap = xmlData.xmlMap;
+        const badge = document.getElementById('sdi-xml-badge');
+        const n = Object.values(xmlData.xmlMap).filter(v => v && v.numero).length;
+        if (n > 0) {
+          badge.style.display = 'inline';
+          badge.textContent = `✓ ${n} fatture XML`;
+          badge.style.color = 'var(--green)';
+          badge.style.borderColor = 'var(--green)';
+        }
+      }
+    }
     renderSdi();
   } catch(e) {
     document.getElementById('sdi-body').innerHTML = `<div style="padding:20px;color:var(--red)">⚠ Errore: ${esc(e.message)}</div>`;
@@ -2294,7 +2313,21 @@ async function sdiLoadZip(file) {
       }
     }
 
-    badge.textContent = `✓ ${count} fatture XML`;
+    badge.textContent = `⏳ Salvataggio sul server...`;
+
+    // Salva sul server per persistenza multi-dispositivo
+    try {
+      const saveResp = await fetch('/api/fatture-sdi/save-xml-data', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ xmlMap: _sdiXmlMap })
+      });
+      const saveRes = await saveResp.json();
+      badge.textContent = `✓ ${saveRes.count || count} fatture XML`;
+    } catch(e) {
+      badge.textContent = `✓ ${count} fatture XML (solo locale)`;
+    }
+
     badge.style.color = 'var(--green)';
     badge.style.borderColor = 'var(--green)';
     renderSdi(); // aggiorna stile fornitori con match
