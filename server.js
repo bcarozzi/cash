@@ -295,11 +295,9 @@ app.get('/api/rimesse', async (req, res) => {
         descr_sollecito: solleciti[r.id]?.descr || ''
       }));
 
-    const today2 = new Date(); today2.setHours(0,0,0,0);
-    const in30   = new Date(today2); in30.setDate(in30.getDate()+30);
     const totale2  = rimesseFilt.reduce((s,r) => s+r.importo, 0);
-    const totScad2 = rimesseFilt.filter(r => r.data_scad && new Date(r.data_scad) < today2).reduce((s,r) => s+r.importo, 0);
-    const tot302   = rimesseFilt.filter(r => r.data_scad && new Date(r.data_scad) >= today2 && new Date(r.data_scad) <= in30).reduce((s,r) => s+r.importo, 0);
+    const totScad2 = rimesseFilt.filter(r => r.data_scad && new Date(r.data_scad) < today).reduce((s,r) => s+r.importo, 0);
+    const tot302   = rimesseFilt.filter(r => r.data_scad && new Date(r.data_scad) >= today && new Date(r.data_scad) <= in30).reduce((s,r) => s+r.importo, 0);
 
     const byDate2 = {};
     rimesseFilt.forEach(r => {
