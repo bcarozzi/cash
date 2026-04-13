@@ -1241,7 +1241,9 @@ function renderRimesse() {
         <td style="padding:7px 10px;font-size:12px">
           <span onclick="rimShowModal('${rid}')" style="cursor:pointer;color:var(--accent);border-bottom:1px dotted var(--accent)">${esc(r.nome)||'—'}</span>
         </td>
-        <td style="padding:7px 10px;font-size:11px;color:var(--text);font-family:'DM Mono',monospace">${esc(r.rif)||'—'}</td>
+        <td style="padding:7px 10px;font-size:11px;color:var(--text)">
+          ${r.fattura ? `<span style="font-family:'DM Mono',monospace">${esc(r.fattura)}</span>` : ''}${r.fattura && r.data_doc ? ` <span style="color:var(--muted);font-size:10px">del ${esc(r.data_doc)}</span>` : (r.fattura ? '' : '—')}
+        </td>
         <td style="padding:7px 10px;font-size:11px;color:var(--muted)">${esc(r.rata)||'—'}</td>
         <td style="padding:7px 10px;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace">${r.data_sollecito ? r.data_sollecito.split('-').reverse().join('/') : '—'}</td>
         <td style="padding:7px 10px;font-size:11px;color:var(--muted)">${esc(r.descr_sollecito)||'—'}</td>

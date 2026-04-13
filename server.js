@@ -244,9 +244,11 @@ app.get('/api/rimesse', async (req, res) => {
       SELECT p."IDPrimaNota", p."Importo", p."DataScad", p."Saldato",
              p."NomePagamDoc", p."RifPagam", p."IDAnagr", p."IDDoc",
              p."CategPagamento",
-             a."Nome"
+             a."Nome",
+             d."NumDoc", d."DataDoc"
       FROM "TPrimaNota" p
       LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
+      LEFT JOIN "TDocTestate" d ON d."IDDoc" = p."IDDoc"
       WHERE p."Saldato" = 0
         AND p."Importo" > 0
         AND (p."CategPagamento" <> 'Riba' OR p."CategPagamento" IS NULL)
@@ -261,6 +263,8 @@ app.get('/api/rimesse', async (req, res) => {
       nome:      (r.nome || '').trim(),
       rata:      (r.nomepagamdoc || '').trim(),
       rif:       (r.rifpagam || '').trim(),
+      fattura:   (r.numdoc || '').trim(),
+      data_doc:  fmtDate(r.datadoc),
       tipo_pag:  (r.categpagamento || '—').trim(),
       id_doc:    r.iddoc
     }));
