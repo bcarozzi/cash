@@ -459,6 +459,7 @@
   <button class="tab-btn active" onclick="switchTab('banche')">🏦 Saldi Banche</button>
   <button class="tab-btn" onclick="switchTab('cashflow')">💰 Cashflow</button>
   <button class="tab-btn" onclick="switchTab('operazioni')">⚡ Operazioni in Corso<span id="op-count-badge" style="display:none;margin-left:7px;background:var(--orange);color:#fff;font-size:11px;font-weight:700;padding:1px 6px;border-radius:10px;vertical-align:middle"></span></button>
+  <button class="tab-btn" onclick="switchTab('rimesse')">🏦 Rimesse Dirette<span id="rim-badge" style="display:none;margin-left:7px;background:var(--green);color:#fff;font-size:11px;font-weight:700;padding:1px 6px;border-radius:10px;vertical-align:middle"></span></button>
   <button class="tab-btn" onclick="switchTab('riba')">📋 RIBA Clienti</button>
   <button class="tab-btn" onclick="switchTab('riba-fornitori')">🏭 RIBA Fornitori</button>
   <button class="tab-btn" onclick="switchTab('wise')">💳 Pagamenti Fornitori</button>
@@ -1135,6 +1136,7 @@ function switchTab(name) {
   event.target.classList.add('active');
   if (name === 'banche' && !_bancheLoaded) { _bancheLoaded = true; loadSaldiBanche();
 _opLoaded = true; loadOperazioni(); }
+  if (name === 'rimesse' && !_rimesseLoaded)       { _rimesseLoaded = true;  loadRimesse(); }
   if (name === 'riba'   && !_ribaLoaded)         { _ribaLoaded = true;     loadRiba(); }
   if (name === 'riba-fornitori' && !_ribaFornLoaded) { _ribaFornLoaded = true; loadRibaFornitori(); }
   if (name === 'wise' && !_wiseLoaded)             { _wiseLoaded = true;   loadWise(); }
@@ -1146,6 +1148,81 @@ _opLoaded = true; loadOperazioni(); }
 // ─── RIBA ────────────────────────────────────────────────
 let _ribaData = null;
 let _ribaSelected = new Set();
+
+// ── RIMESSE DIRETTE ───────────────────────────────────────────────────────────
+let _rimesseData = null;
+let _rimesseLoaded = false;
+
+async function loadRimesse() {
+  document.getElementById('rim-body').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">⏳ Caricamento...</div>';
+  try {
+    const res = await fetch('/api/rimesse');
+    if (!res.ok) throw new Error('Server: ' + res.status);
+    _rimesseData = await res.json();
+    renderRimesse();
+  } catch(e) {
+    document.getElementById('rim-body').innerHTML = `<div style="padding:20px;color:var(--red)">⚠ Errore: ${esc(e.message)}</div>`;
+  }
+}
+
+async function ricaricaRimesse() { _rimesseData = null; _rimesseLoaded = false; await loadRimesse(); }
+
+function renderRimesse() {
+  if (!_rimesseData) return;
+  const { gruppi, totale, totScad, tot30, rimesse } = _rimesseData;
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  document.getElementById('rim-tot').textContent  = '€ ' + fmt(totale);
+  document.getElementById('rim-scad').textContent = '€ ' + fmt(totScad);
+  document.getElementById('rim-30').textContent   = '€ ' + fmt(tot30);
+
+  const n = rimesse.length;
+  document.getElementById('rim-badge-body').textContent = n;
+  const navBadge = document.getElementById('rim-badge');
+  if (navBadge) { if (n > 0) { navBadge.textContent = n; navBadge.style.display = 'inline'; } else { navBadge.style.display = 'none'; } }
+
+  if (!gruppi.length) {
+    document.getElementById('rim-body').innerHTML = '<div style="padding:30px;text-align:center;color:var(--dim)">Nessuna rimessa diretta aperta in Easyfatt</div>';
+    return;
+  }
+
+  let html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">';
+  html += `<thead><tr>
+    <th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Cliente</th>
+    <th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Tipo Pagamento</th>
+    <th style="text-align:left;padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Rata / Rif.</th>
+    <th style="text-align:right;padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border)">Importo</th>
+  </tr></thead><tbody>`;
+
+  gruppi.forEach(g => {
+    const scad = g.data_scad ? new Date(g.data_scad) : null;
+    const scaduta = scad && scad < today;
+    const groupColor = scaduta ? 'rgba(239,68,68,.04)' : 'rgba(34,197,94,.03)';
+    const scadLabel = scaduta ? ' <span style="font-size:10px;color:var(--red);font-weight:600">⚠ scaduta</span>' : '';
+
+    html += `<tr style="background:${groupColor}">
+      <td colspan="3" style="padding:8px 10px;font-size:11px;font-weight:600;color:var(--muted);border-bottom:1px solid var(--border)">
+        📅 Scadenza ${g.data_fmt || g.data_scad || 'N/D'}${scadLabel}
+        <span style="margin-left:10px;background:var(--panel3);border-radius:10px;padding:1px 8px;font-size:10px">${g.items.length}</span>
+      </td>
+      <td style="padding:8px 10px;text-align:right;font-size:12px;font-weight:600;color:var(--green);border-bottom:1px solid var(--border);font-family:'DM Mono',monospace">
+        + € ${fmt(g.totale)}
+      </td>
+    </tr>`;
+
+    g.items.forEach(r => {
+      html += `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+        <td style="padding:7px 10px;font-size:12px">${esc(r.nome) || '—'}</td>
+        <td style="padding:7px 10px;font-size:11px;color:var(--cyan)">${esc(r.tipo_pag)}</td>
+        <td style="padding:7px 10px;font-size:11px;color:var(--muted)">${esc(r.rata)}${r.rif ? ' — ' + esc(r.rif) : ''}</td>
+        <td style="padding:7px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;color:var(--green)">+ € ${fmt(r.importo)}</td>
+      </tr>`;
+    });
+  });
+
+  html += '</tbody></table></div>';
+  document.getElementById('rim-body').innerHTML = html;
+}
 
 async function loadRiba() {
   try {
@@ -2617,6 +2694,28 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal()
 
 </div>
 </div><!-- end tab-operazioni -->
+
+<!-- TAB: RIMESSE DIRETTE ═══════════════════════════════════════════════════ -->
+<div id="tab-rimesse" class="tab-content">
+<div class="main">
+
+  <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+    <div class="kpi"><div class="kpi-label">Da Incassare</div><div class="kpi-val green" id="rim-tot">—</div></div>
+    <div class="kpi"><div class="kpi-label">Scadute</div><div class="kpi-val red" id="rim-scad">—</div></div>
+    <div class="kpi"><div class="kpi-label">Entro 30 gg</div><div class="kpi-val orange" id="rim-30">—</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header" style="display:flex;align-items:center;gap:10px">
+      🏦 Rimesse Dirette — Da Easyfatt
+      <span class="card-badge" id="rim-badge-body">0</span>
+      <button onclick="ricaricaRimesse()" style="margin-left:auto;padding:4px 12px;background:var(--panel3);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-size:12px">↻ Aggiorna</button>
+    </div>
+    <div id="rim-body"><div class="loading">Caricamento...</div></div>
+  </div>
+
+</div>
+</div><!-- end tab-rimesse -->
 
 <!-- TAB: RIBA -->
 <div id="tab-riba" class="tab-content">

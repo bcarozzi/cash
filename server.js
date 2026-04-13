@@ -237,6 +237,58 @@ app.get('/api/riba', async (req, res) => {
   }
 });
 
+// ─── GET RIMESSE DIRETTE ─────────────────────────────────
+app.get('/api/rimesse', async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT p."IDPrimaNota", p."Importo", p."DataScad", p."Saldato",
+             p."NomePagamDoc", p."RifPagam", p."IDAnagr", p."IDDoc",
+             p."CategPagamento",
+             a."Nome"
+      FROM "TPrimaNota" p
+      LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
+      WHERE p."Saldato" = 0
+        AND p."Importo" > 0
+        AND (p."CategPagamento" <> 'Riba' OR p."CategPagamento" IS NULL)
+      ORDER BY p."DataScad" ASC
+    `);
+
+    const rimesse = rows.map(r => ({
+      id:        r.idprimanota,
+      data_scad: isoDate(r.datascad),
+      data_fmt:  fmtDate(r.datascad),
+      importo:   Math.abs(Number(r.importo) || 0),
+      nome:      (r.nome || '').trim(),
+      rata:      (r.nomepagamdoc || '').trim(),
+      rif:       (r.rifpagam || '').trim(),
+      tipo_pag:  (r.categpagamento || '—').trim(),
+      id_doc:    r.iddoc
+    }));
+
+    const today = new Date(); today.setHours(0,0,0,0);
+    const in30  = new Date(today); in30.setDate(in30.getDate() + 30);
+
+    const totale    = rimesse.reduce((s,r) => s + r.importo, 0);
+    const totScad   = rimesse.filter(r => r.data_scad && new Date(r.data_scad) < today).reduce((s,r) => s + r.importo, 0);
+    const tot30     = rimesse.filter(r => r.data_scad && new Date(r.data_scad) >= today && new Date(r.data_scad) <= in30).reduce((s,r) => s + r.importo, 0);
+
+    // Raggruppa per data scadenza
+    const byDate = {};
+    rimesse.forEach(r => {
+      const k = r.data_scad || 'N/D';
+      if (!byDate[k]) byDate[k] = { data_scad: r.data_scad, data_fmt: r.data_fmt, items: [], totale: 0 };
+      byDate[k].items.push(r);
+      byDate[k].totale += r.importo;
+    });
+    const gruppi = Object.values(byDate).sort((a,b) => (a.data_scad||'') < (b.data_scad||'') ? -1 : 1);
+
+    res.json({ rimesse, gruppi, totale, totScad, tot30 });
+  } catch(e) {
+    console.error('Errore /api/rimesse:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── GET RIBA FORNITORI (passive) ────────────────────────
 app.get('/api/riba-fornitori', async (req, res) => {
   try {
