@@ -282,11 +282,59 @@ app.get('/api/rimesse', async (req, res) => {
     });
     const gruppi = Object.values(byDate).sort((a,b) => (a.data_scad||'') < (b.data_scad||'') ? -1 : 1);
 
-    res.json({ rimesse, gruppi, totale, totScad, tot30 });
+    const appData = loadData();
+    const solleciti = appData.rimesse_solleciti || {};
+    const saldati   = appData.rimesse_saldati   || {};
+
+    // Escludi già saldati, arricchisci con dati locali
+    const rimesseFilt = rimesse
+      .filter(r => !saldati[r.id])
+      .map(r => ({
+        ...r,
+        data_sollecito: solleciti[r.id]?.data  || '',
+        descr_sollecito: solleciti[r.id]?.descr || ''
+      }));
+
+    const today2 = new Date(); today2.setHours(0,0,0,0);
+    const in30   = new Date(today2); in30.setDate(in30.getDate()+30);
+    const totale2  = rimesseFilt.reduce((s,r) => s+r.importo, 0);
+    const totScad2 = rimesseFilt.filter(r => r.data_scad && new Date(r.data_scad) < today2).reduce((s,r) => s+r.importo, 0);
+    const tot302   = rimesseFilt.filter(r => r.data_scad && new Date(r.data_scad) >= today2 && new Date(r.data_scad) <= in30).reduce((s,r) => s+r.importo, 0);
+
+    const byDate2 = {};
+    rimesseFilt.forEach(r => {
+      const k = r.data_scad || 'N/D';
+      if (!byDate2[k]) byDate2[k] = { data_scad: r.data_scad, data_fmt: r.data_fmt, items: [], totale: 0 };
+      byDate2[k].items.push(r);
+      byDate2[k].totale += r.importo;
+    });
+    const gruppi2 = Object.values(byDate2).sort((a,b) => (a.data_scad||'') < (b.data_scad||'') ? -1 : 1);
+
+    res.json({ rimesse: rimesseFilt, gruppi: gruppi2, totale: totale2, totScad: totScad2, tot30: tot302 });
   } catch(e) {
     console.error('Errore /api/rimesse:', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+app.post('/api/rimesse/sollecito', (req, res) => {
+  const { id, data, descr } = req.body;
+  if (!id) return res.status(400).json({ error: 'id mancante' });
+  const appData = loadData();
+  if (!appData.rimesse_solleciti) appData.rimesse_solleciti = {};
+  appData.rimesse_solleciti[id] = { data: data||'', descr: descr||'', ts: new Date().toISOString() };
+  saveData(appData);
+  res.json({ ok: true });
+});
+
+app.post('/api/rimesse/saldato', (req, res) => {
+  const { id, data_saldo, dove } = req.body;
+  if (!id) return res.status(400).json({ error: 'id mancante' });
+  const appData = loadData();
+  if (!appData.rimesse_saldati) appData.rimesse_saldati = {};
+  appData.rimesse_saldati[id] = { data_saldo: data_saldo||'', dove: dove||'', ts: new Date().toISOString() };
+  saveData(appData);
+  res.json({ ok: true });
 });
 
 // ─── GET RIBA FORNITORI (passive) ────────────────────────
