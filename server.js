@@ -951,6 +951,7 @@ app.get('/api/fatture-sdi', async (req, res) => {
           rata_n:          nRate > 1 ? `${idx+1}/${nRate}` : null,
           nome:            (r.nome || '').trim(),
           cf:              cf,
+          piva:            piva,
           numdoc:          (r.numdoc || '').trim(),
           tipodoc:         (r.tipodocfe || '').trim(),
           data_doc:        dataDoc ? dataDoc.toISOString().slice(0,10) : null,

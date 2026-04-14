@@ -1728,8 +1728,8 @@ function renderSdi() {
       <td style="text-align:center;padding:8px 6px">
         <input type="checkbox" class="sdi-chk-row" data-id="${esc(f.id)}" data-importo="${f.importo}" onchange="aggiornaSelTotaleSdi()">
       </td>
-      <td style="font-size:12px;font-weight:500">${sdiHasXml(f.cf,f.numdoc)
-        ? `<span onclick="sdiShowFattura('${esc(f.cf)}','${esc(f.numdoc)}')"
+      <td style="font-size:12px;font-weight:500">${sdiHasXml(f.cf,f.numdoc,f.piva)
+        ? `<span onclick="sdiShowFattura('${esc(f.cf)}','${esc(f.numdoc)}','${esc(f.piva||'')}')"
             style="cursor:pointer;border-bottom:1px dotted var(--accent);color:var(--accent)"
             title="Vedi fattura XML">📄 ${esc(f.nome)}</span>`
         : esc(f.nome)
@@ -2419,15 +2419,21 @@ _opLoaded = true; loadOperazioni();
 // ─── VIEWER FATTURE XML (SDI) ─────────────────────────────
 let _sdiXmlMap = {};  // chiave: "piva_numdoc" e "piva"
 
-function _sdiNormKey(piva, numdoc) {
-  return (piva || '').replace(/\s/g,'').toUpperCase() + '_' +
+function _sdiNormKey(id, numdoc) {
+  return (id || '').replace(/\s/g,'').toUpperCase() + '_' +
          (numdoc || '').trim().toUpperCase().replace(/\s+/g,'-');
 }
+function _sdiNormId(id) { return (id || '').replace(/\s/g,'').toUpperCase(); }
 
-function sdiHasXml(cf, numdoc) {
+// Cerca XML provando sia CF che PIVA come chiave (per professionisti CF ≠ PIVA)
+function sdiHasXml(cf, numdoc, piva) {
   if (!Object.keys(_sdiXmlMap).length) return false;
-  const key = _sdiNormKey(cf, numdoc);
-  return !!(  _sdiXmlMap[key] || _sdiXmlMap[(cf||'').toUpperCase()]);
+  const ids = [cf, piva].filter(Boolean);
+  for (const id of ids) {
+    if (_sdiXmlMap[_sdiNormKey(id, numdoc)]) return true;
+    if (_sdiXmlMap[_sdiNormId(id)]) return true;
+  }
+  return false;
 }
 
 async function sdiLoadZip(file) {
@@ -2445,10 +2451,13 @@ async function sdiLoadZip(file) {
     // Funzione per processare un XML string
     const processXml = (xmlStr) => {
       const d = _sdiParseXml(xmlStr);
-      if (!d || !d.piva) return;
-      const key = _sdiNormKey(d.piva, d.numero);
-      _sdiXmlMap[key] = d;
-      _sdiXmlMap[d.piva.toUpperCase()] = d; // fallback solo piva
+      if (!d || (!d.piva && !d.cf)) return;
+      // Indicizza per PIVA e CF (professionisti hanno entrambi diversi)
+      const ids = [d.piva, d.cf].filter(Boolean);
+      ids.forEach(id => {
+        _sdiXmlMap[_sdiNormKey(id, d.numero)] = d;
+        _sdiXmlMap[_sdiNormId(id)] = d; // fallback solo id
+      });
       count++;
     };
 
@@ -2517,6 +2526,11 @@ function _sdiParseXml(xmlStr) {
     const idCodici = all('IdCodice');
     const piva = idCodici[1] || idCodici[0] || '';
 
+    // Codice Fiscale cedente — il primo CodiceFiscale dopo CedentePrestatore
+    // (utile per professionisti dove CF ≠ PIVA, es. CTRFNC73D23Z133A)
+    const cedente = doc.getElementsByTagName('CedentePrestatore')[0];
+    const cfCedente = cedente ? (cedente.getElementsByTagName('CodiceFiscale')[0]?.textContent.trim() || '') : '';
+
     const denominazioni = all('Denominazione');
     const fornitore = denominazioni[0] || '';
 
@@ -2562,7 +2576,7 @@ function _sdiParseXml(xmlStr) {
       banca:    dp.getElementsByTagName('IstitutoFinanziario')[0]?.textContent || ''
     } : null;
 
-    return { piva, fornitore, indirizzo, tipo, data, numero, totale, righe, riepilogo, pagamento };
+    return { piva, cf: cfCedente, fornitore, indirizzo, tipo, data, numero, totale, righe, riepilogo, pagamento };
   } catch(e) {
     console.warn('Errore parse XML:', e.message);
     return null;
@@ -2577,9 +2591,13 @@ const _TIPO_DOC = {
   TD01:'Fattura', TD02:'Acconto su fattura', TD04:'Nota credito', TD06:'Parcella', TD17:'Integrazione IVA', TD24:'Fattura differita'
 };
 
-function sdiShowFattura(cf, numdoc) {
-  const key = _sdiNormKey(cf, numdoc);
-  let d = _sdiXmlMap[key] || _sdiXmlMap[(cf||'').toUpperCase()];
+function sdiShowFattura(cf, numdoc, piva) {
+  // Cerca prima per CF, poi per PIVA (professionisti hanno entrambi diversi)
+  let d = null;
+  for (const id of [cf, piva].filter(Boolean)) {
+    d = _sdiXmlMap[_sdiNormKey(id, numdoc)] || _sdiXmlMap[_sdiNormId(id)];
+    if (d) break;
+  }
 
   const modal = document.getElementById('sdi-modal');
   const body  = document.getElementById('sdi-modal-body');
