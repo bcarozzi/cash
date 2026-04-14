@@ -1062,16 +1062,20 @@ app.post('/api/fatture-sdi/parse-p7m', (req, res) => {
     const buf = Buffer.from(b64, 'base64');
     // Cerca il marker di inizio XML nel binario P7M
     let startIdx = -1;
-    for (const marker of ['<?xml', '<FatturaElettronica']) {
+    for (const marker of ['<?xml', '<FatturaElettronica', '<p:FatturaElettronica', '<ns2:FatturaElettronica']) {
       const idx = buf.indexOf(Buffer.from(marker));
       if (idx !== -1 && (startIdx === -1 || idx < startIdx)) startIdx = idx;
     }
     if (startIdx === -1) return res.status(422).json({ ok:false, error:'XML non trovato nel P7M' });
     const xmlPart = buf.slice(startIdx).toString('utf8');
-    const endTag = '</FatturaElettronica>';
-    const endIdx = xmlPart.lastIndexOf(endTag);
+    // Cerca il tag di chiusura con o senza namespace prefix (es. </p:FatturaElettronica>)
+    let endIdx = -1, endTagLen = 0;
+    for (const endTag of ['</FatturaElettronica>', '</p:FatturaElettronica>', '</ns2:FatturaElettronica>']) {
+      const idx = xmlPart.lastIndexOf(endTag);
+      if (idx !== -1 && idx + endTag.length > endIdx + endTagLen) { endIdx = idx; endTagLen = endTag.length; }
+    }
     if (endIdx === -1) return res.status(422).json({ ok:false, error:'Tag di chiusura XML non trovato' });
-    res.json({ ok:true, xml: xmlPart.slice(0, endIdx + endTag.length) });
+    res.json({ ok:true, xml: xmlPart.slice(0, endIdx + endTagLen) });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
   }
