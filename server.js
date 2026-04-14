@@ -1061,21 +1061,21 @@ app.post('/api/fatture-sdi/parse-p7m', (req, res) => {
     if (!b64) return res.status(400).json({ ok:false, error:'Dati mancanti' });
     const buf = Buffer.from(b64, 'base64');
     // Cerca il marker di inizio XML nel binario P7M
-    let startIdx = -1;
-    for (const marker of ['<?xml', '<FatturaElettronica', '<p:FatturaElettronica', '<ns2:FatturaElettronica']) {
-      const idx = buf.indexOf(Buffer.from(marker));
-      if (idx !== -1 && (startIdx === -1 || idx < startIdx)) startIdx = idx;
+    // Trova inizio XML: preferisce <?xml, fallback a qualsiasi <[prefix:]FatturaElettronica
+    let startIdx = buf.indexOf(Buffer.from('<?xml'));
+    if (startIdx === -1) {
+      const m = buf.toString('binary').match(/<[A-Za-z0-9]*:?FatturaElettronica\b/);
+      if (m) startIdx = m.index;
     }
     if (startIdx === -1) return res.status(422).json({ ok:false, error:'XML non trovato nel P7M' });
     const xmlPart = buf.slice(startIdx).toString('utf8');
-    // Cerca il tag di chiusura con o senza namespace prefix (es. </p:FatturaElettronica>)
-    let endIdx = -1, endTagLen = 0;
-    for (const endTag of ['</FatturaElettronica>', '</p:FatturaElettronica>', '</ns2:FatturaElettronica>']) {
-      const idx = xmlPart.lastIndexOf(endTag);
-      if (idx !== -1 && idx + endTag.length > endIdx + endTagLen) { endIdx = idx; endTagLen = endTag.length; }
-    }
-    if (endIdx === -1) return res.status(422).json({ ok:false, error:'Tag di chiusura XML non trovato' });
-    res.json({ ok:true, xml: xmlPart.slice(0, endIdx + endTagLen) });
+    // Cerca tag chiusura con qualsiasi namespace prefix (es. </ns0:FatturaElettronica>)
+    const closeRegex = /<\/([A-Za-z0-9]+:)?FatturaElettronica\s*>/g;
+    let lastMatch = null, mm;
+    while ((mm = closeRegex.exec(xmlPart)) !== null) lastMatch = mm;
+    if (!lastMatch) return res.status(422).json({ ok:false, error:'Tag di chiusura XML non trovato' });
+    const endPos = lastMatch.index + lastMatch[0].length;
+    res.json({ ok:true, xml: xmlPart.slice(0, endPos) });
   } catch(e) {
     res.status(500).json({ ok:false, error:e.message });
   }
