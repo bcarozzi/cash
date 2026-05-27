@@ -6222,6 +6222,57 @@ function selectAllSdi(checked) {
   aggiornaSelTotaleSdi();
 }
 
+function stampaSelezione(tipo) {
+  let righe = [];
+  let titolo = '';
+  if (tipo === 'sdi') {
+    const ids = new Set([...document.querySelectorAll('.sdi-chk-row:checked')].map(c => c.dataset.id));
+    if (!ids.size) { alert('Seleziona almeno una fattura prima di stampare.'); return; }
+    righe = (_sdiData.fatture || []).filter(f => ids.has(f.id))
+      .map(f => ({ scadenza: f.scadenza || '—', fornitore: f.nome || '—', importo: f.importo }));
+    titolo = 'Fatture da Pagare';
+  } else {
+    const keys = new Set([...document.querySelectorAll('.we-chk-row:checked')].map(c => c.dataset.key));
+    if (!keys.size) { alert('Seleziona almeno un pagamento prima di stampare.'); return; }
+    righe = (_wiseData.righe || []).filter(r => keys.has(r.id_anagr + '_' + (r.data_scad || '')))
+      .map(r => ({ scadenza: r.data_scad || '—', fornitore: r.nome || '—', importo: r.importo }));
+    titolo = 'Pagamenti Fornitori';
+  }
+  const totale = righe.reduce((s, r) => s + (r.importo || 0), 0);
+  const fmtDate = d => d === '—' ? '—' : (d.slice(8,10) + '/' + d.slice(5,7) + '/' + d.slice(0,4));
+  const fmtEur  = n => '€ ' + Math.round(n).toLocaleString('it-IT', {useGrouping:false});
+  const oggi    = new Date().toLocaleDateString('it-IT');
+  const righeHtml = righe.map(r =>
+    `<tr><td>${fmtDate(r.scadenza)}</td><td>${r.fornitore}</td><td class="imp">- ${fmtEur(r.importo)}</td></tr>`
+  ).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+  <title>AEC Tesoreria — ${titolo}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; color: #000; }
+    h2 { margin: 0 0 4px; font-size: 16px; }
+    .meta { color: #666; font-size: 11px; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #f0f0f0; border-bottom: 2px solid #333; padding: 6px 8px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+    td { border-bottom: 1px solid #ddd; padding: 5px 8px; }
+    .imp { text-align: right; font-weight: 600; font-family: monospace; }
+    th.imp { text-align: right; }
+    tfoot td { border-top: 2px solid #333; border-bottom: none; font-weight: 700; padding: 6px 8px; }
+    @media print { body { margin: 10mm; } }
+  </style></head><body>
+  <h2>AEC Tesoreria — ${titolo}</h2>
+  <div class="meta">Stampato il ${oggi} · ${righe.length} righe selezionate</div>
+  <table>
+    <thead><tr><th>Scadenza</th><th>Fornitore</th><th class="imp">Importo</th></tr></thead>
+    <tbody>${righeHtml}</tbody>
+    <tfoot><tr><td colspan="2">TOTALE</td><td class="imp">- ${fmtEur(totale)}</td></tr></tfoot>
+  </table>
+  <script>window.onload=()=>{ window.print(); window.onafterprint=()=>window.close(); }<\/script>
+  </body></html>`;
+  const w = window.open('', '_blank', 'width=800,height=600');
+  w.document.write(html);
+  w.document.close();
+}
+
 function aggiornaSelTotaleSdi() {
   const sel = [...document.querySelectorAll('.sdi-chk-row:checked')];
   const tot = sel.reduce((s, c) => s + parseFloat(c.dataset.importo || 0), 0);
@@ -7545,6 +7596,7 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal()
         <span id="sdi-xml-badge" style="display:none;font-size:11px;color:var(--green);background:rgba(34,197,94,.1);border:1px solid var(--green);border-radius:12px;padding:2px 10px"></span>
         <button class="btn-add" onclick="selectAllSdi(true)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Seleziona tutti</button>
         <button class="btn-add" onclick="selectAllSdi(false)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Deseleziona</button>
+        <button class="btn-add" onclick="stampaSelezione('sdi')" style="background:#1e3a5f;border:1px solid #2563eb">🖨 Stampa</button>
         <button class="btn-add" onclick="exportSdiWiseCSV()" style="background:#2d6a4f;border:1px solid #40916c">⬇ Scarica CSV Wise</button>
         <button class="btn-add" onclick="segnaSdiPagate()" style="background:#166534;border:1px solid #16a34a">✓ Segna come Pagate</button>
       </div>
@@ -7600,6 +7652,7 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal()
         <button class="btn-add" onclick="ricaricaWise()" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">🔄 Aggiorna</button>
         <button class="btn-add" onclick="selectAllWise(true)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Seleziona tutti</button>
         <button class="btn-add" onclick="selectAllWise(false)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Deseleziona</button>
+        <button class="btn-add" onclick="stampaSelezione('wise')" style="background:#1e3a5f;border:1px solid #2563eb">🖨 Stampa</button>
         <button class="btn-add" onclick="exportWiseCSV()" style="background:#2d6a4f;border:1px solid #40916c">⬇ Scarica CSV Wise</button>
         <button class="btn-add" onclick="segnaPagatiDanea()" style="background:#7c3aed;border:1px solid #a855f7">✓ Segna Pagati in Danea</button>
       </div>
