@@ -1213,10 +1213,7 @@ app.get('/api/fatture-sdi', async (req, res) => {
       return new Date(r.dataricezione) >= cutoff;
     });
 
-    // ── ANTI-DOPPIONE ──
-    // Escludi fatture già importate in Danea (presenti in TDocTestate).
-    // Match su: CF/PIVA fornitore + NumDoc + DataDoc (yyyy-mm-dd).
-    // La DataDoc è essenziale perché alcuni fornitori riusano numeri (es. OZNEROL 3,4 ogni anno).
+    // Carico TDocTestate solo per IBAN ultima fattura (non più per anti-doppione)
     const normStr = (s) => (s || '').toString().trim().toUpperCase().replace(/\s+/g, '');
     const normDate = (d) => {
       if (!d) return '';
@@ -1225,8 +1222,6 @@ app.get('/api/fatture-sdi', async (req, res) => {
         return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
       } catch { return ''; }
     };
-    // Carico TDocTestate una sola volta (ci serve per anti-doppione + IBAN ultima fattura)
-    const docKeySet = new Set();
     const docIbanByIdAnagr = {};
     let docRowsAll = [];
     let anRows = [];
@@ -1241,44 +1236,13 @@ app.get('/api/fatture-sdi', async (req, res) => {
       console.warn('Caricamento TDocTestate/TAnagrafica fallito:', eLoad.message);
     }
 
-    // Mappa CF/PIVA per IDAnagr (usata per chiave deduplica)
-    const cfByIdAnagr = {};
-    anRows.forEach(a => {
-      const cf = (a.codicefiscale || a.codice_fiscale || a.cf || '').toString().trim();
-      const piva = (a.partitaiva || a.partita_iva || a.partiva || a.piva || '').toString().trim();
-      cfByIdAnagr[a.idanagr] = { cf, piva };
-    });
-
-    // Popolo docKeySet (anti-doppione) e docIbanByIdAnagr (IBAN ultima fattura) in un'unica scansione
+    // IBAN ultima fattura per IDAnagr (TDocTestate ordinato IDDoc DESC → primo trovato = più recente)
     docRowsAll.forEach(d => {
-      // Anti-doppione
-      const num = normStr(d.numdoc);
-      const dataKey = normDate(d.datadoc);
-      if (num && dataKey) {
-        const ana = cfByIdAnagr[d.idanagr] || {};
-        [normStr(ana.cf), normStr(ana.piva)].filter(Boolean).forEach(k => {
-          docKeySet.add(k + '|' + num + '|' + dataKey);
-        });
-      }
-      // IBAN ultima fattura (prende il primo che trova per IDAnagr, ordinato IDDoc DESC)
       if (d.idanagr != null && !docIbanByIdAnagr[d.idanagr]) {
         const coord = (d.pagam_coordbancarie || '').trim();
         if (coord) docIbanByIdAnagr[d.idanagr] = coord;
       }
     });
-
-    // Filtra TAgyo rimuovendo fatture già importate in Danea
-    if (docKeySet.size > 0) {
-      rows = rows.filter(r => {
-        const num = normStr(r.numdoc);
-        const dataKey = normDate(r.datadoc);
-        if (!num || !dataKey) return true;
-        const cf = normStr(r.codicefiscale);
-        const piva = normStr(r.partitaiva);
-        const keys = [cf, piva].filter(Boolean).map(k => k + '|' + num + '|' + dataKey);
-        return !keys.some(k => docKeySet.has(k));
-      });
-    }
 
     // ── DEDUP INTERNO TAGYO ──
     // TAgyo può contenere più righe per la stessa fattura (IDAgyo diversi).
