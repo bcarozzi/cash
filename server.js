@@ -98,7 +98,13 @@ function isoDate(d) {
   if (!d) return null;
   const dt = new Date(d);
   if (isNaN(dt)) return null;
-  return dt.toISOString().slice(0,10);
+  // Usa componenti LOCALI (Danea memorizza le date come mezzanotte locale →
+  // in UTC diventano 22:00/23:00 del giorno precedente, a seconda di CET/CEST).
+  // toISOString() sballa il giorno; getFullYear/getMonth/getDate lo tengono corretto.
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2,'0');
+  const day = String(dt.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
 }
 
 // ─── GET CASHFLOW DATA ────────────────────────────────────
@@ -240,8 +246,10 @@ app.get('/api/riba', async (req, res) => {
 // ─── GET RIMESSE DIRETTE ─────────────────────────────────
 app.get('/api/rimesse', async (req, res) => {
   try {
+    const includiSaldate = req.query.includiSaldate === '1';
+    const saldatoFilter  = includiSaldate ? '' : 'AND p."Saldato" = 0';
     const rows = await query(`
-      SELECT p."IDPrimaNota", p."Importo", p."DataScad", p."Saldato",
+      SELECT p."IDPrimaNota", p."Importo", p."DataScad", p."DataPagam", p."Saldato",
              p."NomePagamDoc", p."RifPagam", p."IDAnagr", p."IDDoc",
              p."CategPagamento",
              a."Nome",
@@ -249,9 +257,9 @@ app.get('/api/rimesse', async (req, res) => {
       FROM "TPrimaNota" p
       LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
       LEFT JOIN "TDocTestate" d ON d."IDDoc" = p."IDDoc"
-      WHERE p."Saldato" = 0
-        AND p."Importo" > 0
+      WHERE p."Importo" <> 0
         AND (p."CategPagamento" <> 'Riba' OR p."CategPagamento" IS NULL)
+        ${saldatoFilter}
       ORDER BY p."DataScad" ASC
     `);
 
@@ -259,14 +267,19 @@ app.get('/api/rimesse', async (req, res) => {
       id:        r.idprimanota,
       data_scad: isoDate(r.datascad),
       data_fmt:  fmtDate(r.datascad),
-      importo:   Math.abs(Number(r.importo) || 0),
+      importo:   Number(r.importo) || 0,  // mantiene segno: note di credito = negativo
       nome:      (r.nome || '').trim(),
       rata:      (r.nomepagamdoc || '').trim(),
       rif:       (r.rifpagam || '').trim(),
       fattura:   (r.numdoc || '').trim(),
       data_doc:  fmtDate(r.datadoc),
+      data_doc_iso: isoDate(r.datadoc),
+      // data pagamento: popolata solo se la scadenza è saldata in DB (TPrimaNota."DataPagam")
+      data_pagam_iso: r.saldato ? isoDate(r.datapagam) : '',
+      data_pagam_fmt: r.saldato ? fmtDate(r.datapagam) : '',
       tipo_pag:  (r.categpagamento || '—').trim(),
-      id_doc:    r.iddoc
+      id_doc:    r.iddoc,
+      saldato_db: !!r.saldato
     }));
 
     const today = new Date(); today.setHours(0,0,0,0);
@@ -290,31 +303,329 @@ app.get('/api/rimesse', async (req, res) => {
     const solleciti = appData.rimesse_solleciti || {};
     const saldati   = appData.rimesse_saldati   || {};
 
-    // Escludi già saldati, arricchisci con dati locali
+    // Arricchisci con dati locali. Se includiSaldate: tieni anche i saldati (DB o locali) marcandoli.
     const rimesseFilt = rimesse
-      .filter(r => !saldati[r.id])
-      .map(r => ({
-        ...r,
-        data_sollecito: solleciti[r.id]?.data  || '',
-        descr_sollecito: solleciti[r.id]?.descr || ''
-      }));
+      .filter(r => {
+        const saldatoLocale = !!saldati[r.id];
+        const pagata = r.saldato_db || saldatoLocale;
+        return includiSaldate ? true : !pagata;
+      })
+      .map(r => {
+        const saldatoLocale = saldati[r.id] || null;
+        const pagata = r.saldato_db || !!saldatoLocale;
+        return {
+          ...r,
+          data_sollecito:  solleciti[r.id]?.data  || '',
+          descr_sollecito: solleciti[r.id]?.descr || '',
+          pagata,
+          data_saldo:      saldatoLocale?.data_saldo || '',
+          saldo_dove:      saldatoLocale?.dove || ''
+        };
+      });
 
-    const totale2  = rimesseFilt.reduce((s,r) => s+r.importo, 0);
-    const totScad2 = rimesseFilt.filter(r => r.data_scad && new Date(r.data_scad) < today).reduce((s,r) => s+r.importo, 0);
-    const tot302   = rimesseFilt.filter(r => r.data_scad && new Date(r.data_scad) >= today && new Date(r.data_scad) <= in30).reduce((s,r) => s+r.importo, 0);
+    // Totali: conta solo le NON pagate (le pagate sono "informative")
+    const nonPagate = rimesseFilt.filter(r => !r.pagata);
+    const totale2  = nonPagate.reduce((s,r) => s+r.importo, 0);
+    const totScad2 = nonPagate.filter(r => r.data_scad && new Date(r.data_scad) < today).reduce((s,r) => s+r.importo, 0);
+    const tot302   = nonPagate.filter(r => r.data_scad && new Date(r.data_scad) >= today && new Date(r.data_scad) <= in30).reduce((s,r) => s+r.importo, 0);
 
     const byDate2 = {};
     rimesseFilt.forEach(r => {
       const k = r.data_scad || 'N/D';
       if (!byDate2[k]) byDate2[k] = { data_scad: r.data_scad, data_fmt: r.data_fmt, items: [], totale: 0 };
       byDate2[k].items.push(r);
-      byDate2[k].totale += r.importo;
+      if (!r.pagata) byDate2[k].totale += r.importo;
     });
     const gruppi2 = Object.values(byDate2).sort((a,b) => (a.data_scad||'') < (b.data_scad||'') ? -1 : 1);
 
-    res.json({ rimesse: rimesseFilt, gruppi: gruppi2, totale: totale2, totScad: totScad2, tot30: tot302 });
+    res.json({ rimesse: rimesseFilt, gruppi: gruppi2, totale: totale2, totScad: totScad2, tot30: tot302, includiSaldate });
   } catch(e) {
     console.error('Errore /api/rimesse:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── DIAGNOSTIC: tutte le primanota di un cliente (per debug) ─────────────
+app.get('/api/rimesse/debug-cliente', async (req, res) => {
+  try {
+    const q = (req.query.nome || '').trim().toUpperCase();
+    if (!q) return res.status(400).json({ error: 'usa ?nome=XXX' });
+    const rows = await query(`
+      SELECT p.*,
+             a."Nome" AS "AnagNome",
+             d."NumDoc" AS "DocNumDoc", d."DataDoc" AS "DocDataDoc"
+      FROM "TPrimaNota" p
+      LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
+      LEFT JOIN "TDocTestate" d ON d."IDDoc" = p."IDDoc"
+      WHERE UPPER(a."Nome") LIKE ?
+      ORDER BY p."DataScad" ASC
+    `, ['%' + q + '%']);
+    // Ritorna tutte le colonne (grezze) così vediamo cosa c'è davvero in TPrimaNota
+    res.json({ count: rows.length, rows });
+  } catch(e) {
+    console.error('Errore debug-cliente:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── GET SALDI CLIENTI / FORNITORI a una data ──────────────────────────────
+// Replica la logica Danea dell'elenco clienti/fornitori:
+//
+// 1) CLASSIFICAZIONE cliente vs fornitore:
+//    - TipoDoc del documento è il classificatore primario.
+//      I/F/V/J → vendita (lato cliente)  |  U/A → acquisto (lato fornitore)
+//      N (nota credito): segno negativo = NCV (riduce credito cliente),
+//                        segno positivo = NCA (riduce debito fornitore)
+//    - Se TipoDoc mancante → flag Cliente/Fornitore di TAnagrafica
+//    - Ultimo fallback: segno dell'importo
+//
+// 2) INCLUSIONE (scadenza ancora "aperta" alla data cutoff):
+//    - saldato=0 → aperta ordinaria
+//    - saldato=1 e DataPagam > cutoff → al cutoff era aperta (pagata dopo)
+//    - saldato=1 e CategPagam='Riba' e DataScad > cutoff → Ri.Ba. presentata in banca
+//      ma scadenza futura → in "BDM c/effetti" → ancora aperta contabilmente
+//    - altrimenti (saldato=1 e DataPagam ≤ cutoff) → chiusa, escludi
+app.get('/api/saldi-cli-forn', async (req, res) => {
+  try {
+    const today = (new Date()).toISOString().slice(0,10);
+    const dataCli  = (req.query.dataCli  || today).slice(0,10);
+    const dataForn = (req.query.dataForn || today).slice(0,10);
+
+    const rows = await query(`
+      SELECT p."IDPrimaNota", p."IDAnagr", p."Importo", p."DataScad", p."DataPagam",
+             p."Saldato", p."IDDoc", p."CategPagamento",
+             a."Nome" AS "AnagNome",
+             a."Cliente" AS "AnagCliente",
+             a."Fornitore" AS "AnagFornitore",
+             d."DataDoc" AS "DocDataDoc",
+             d."TipoDoc" AS "DocTipoDoc"
+      FROM "TPrimaNota" p
+      LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
+      LEFT JOIN "TDocTestate" d ON d."IDDoc" = p."IDDoc"
+      WHERE p."Importo" <> 0
+    `);
+
+    const truthy = v => v === 1 || v === 'S' || v === 's' || v === true || v === '1';
+    const mapCli  = {}; // IDAnagr -> { idAnagr, nome, saldo }
+    const mapForn = {};
+
+    // Classifica una riga come "vendita" (→cliente) o "acquisto" (→fornitore).
+    // Ritorna true=vendita, false=acquisto.
+    function classifica(r, importo) {
+      const tipo = (r.doctipodoc || '').trim().toUpperCase();
+      if (tipo) {
+        // Acquisto: U=uscita, A=acquisto
+        if (tipo.startsWith('U') || tipo.startsWith('A')) return false;
+        // Vendita: F=fattura, I=incasso/vendita, V=vendita, J=giroconto vendita
+        if (tipo.startsWith('F') || tipo.startsWith('I') || tipo.startsWith('V') || tipo.startsWith('J')) return true;
+        // Nota credito: il segno distingue NCV da NCA
+        if (tipo.startsWith('N')) return importo < 0;
+        // TipoDoc sconosciuto → cadi nel fallback
+      }
+      const isCli  = truthy(r.anagcliente);
+      const isForn = truthy(r.anagfornitore);
+      if (isCli && !isForn)      return true;
+      if (isForn && !isCli)      return false;
+      return importo > 0; // fallback su segno
+    }
+
+    for (const r of rows) {
+      const ddoc  = isoDate(r.docdatadoc);
+      if (!ddoc) continue;                              // senza DataDoc non posizionabile
+      const dpag  = isoDate(r.datapagam);
+      const dscad = isoDate(r.datascad);
+      const saldato = !!r.saldato;
+      const categ = (r.categpagamento || '').trim().toLowerCase();
+      const isRiba = categ === 'riba';
+      const nome = (r.anagnome || '').trim();
+      if (!nome) continue;
+      const idAnagr = r.idanagr;
+      const importo = Number(r.importo) || 0;
+
+      const isSale = classifica(r, importo);
+      const cutoff = isSale ? dataCli : dataForn;
+      if (ddoc > cutoff) continue;                     // emesso dopo la data → ignora
+
+      // Logica "aperta al cutoff":
+      //  - non saldata
+      //  - saldata dopo il cutoff (pagata in futuro rispetto alla data)
+      //  - saldata (Ri.Ba. presentata in banca) con scadenza successiva al cutoff
+      //    → ancora in "BDM Banca c/effetti" per Danea
+      let aperta = false;
+      if (!saldato) aperta = true;
+      else if (dpag && dpag > cutoff) aperta = true;
+      else if (isRiba && dscad && dscad > cutoff) aperta = true;
+
+      if (!aperta) continue;
+
+      const map = isSale ? mapCli : mapForn;
+      if (!map[idAnagr]) map[idAnagr] = { idAnagr, nome, saldo: 0 };
+      map[idAnagr].saldo += importo;
+    }
+
+    // Filtra saldi a zero (tolleranza 1 cent) e ordina ALFABETICAMENTE per controllo contabile
+    const byNome = (a,b) => (a.nome || '').localeCompare(b.nome || '', 'it', { sensitivity: 'base' });
+    const clienti   = Object.values(mapCli).filter(x => Math.abs(x.saldo) > 0.01).sort(byNome);
+    const fornitori = Object.values(mapForn).filter(x => Math.abs(x.saldo) > 0.01).sort(byNome);
+
+    const totaleCli  = clienti.reduce((s,x) => s + x.saldo, 0);
+    const totaleForn = fornitori.reduce((s,x) => s + x.saldo, 0);
+
+    res.json({ dataCli, dataForn, clienti, fornitori, totaleCli, totaleForn });
+  } catch(e) {
+    console.error('Errore /api/saldi-cli-forn:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── DEBUG: dump dettagliato per una anagrafica (saldi cli/forn) ────────────
+// Mostra riga per riga: classificazione, filtro, inclusione/esclusione e motivo.
+app.get('/api/saldi-cli-forn/debug', async (req, res) => {
+  try {
+    const q = (req.query.nome || '').trim().toUpperCase();
+    if (!q) return res.status(400).json({ error: 'usa ?nome=XXX' });
+    const today = (new Date()).toISOString().slice(0,10);
+    const dataCli  = (req.query.dataCli  || today).slice(0,10);
+    const dataForn = (req.query.dataForn || today).slice(0,10);
+    const openOnly = req.query.openOnly === '1';
+    const summary  = req.query.summary  === '1';
+
+    const rows = await query(`
+      SELECT p."IDPrimaNota", p."IDAnagr", p."Importo", p."DataScad", p."DataPagam",
+             p."Saldato", p."IDDoc", p."CategPagamento", p."NomePagamDoc", p."Risorsa",
+             a."Nome" AS "AnagNome",
+             a."Cliente" AS "AnagCliente",
+             a."Fornitore" AS "AnagFornitore",
+             d."NumDoc" AS "DocNumDoc",
+             d."DataDoc" AS "DocDataDoc",
+             d."TipoDoc" AS "DocTipoDoc"
+      FROM "TPrimaNota" p
+      LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
+      LEFT JOIN "TDocTestate" d ON d."IDDoc" = p."IDDoc"
+      WHERE UPPER(a."Nome") LIKE ?
+      ORDER BY d."DataDoc" ASC, p."DataScad" ASC
+    `, ['%' + q + '%']);
+
+    const truthy = v => v === 1 || v === 'S' || v === 's' || v === true || v === '1';
+    let saldoCli = 0, saldoForn = 0;
+    // summary bucket: aperte_ordinarie | banca_effetti | chiuse
+    const summaryBuckets = {
+      aperte_ord_cli: { count: 0, sum: 0 },
+      aperte_ord_forn: { count: 0, sum: 0 },
+      banca_effetti_cli: { count: 0, sum: 0 },
+      banca_effetti_forn: { count: 0, sum: 0 },
+      chiuse: { count: 0, sum: 0 },
+      scartate: { count: 0, sum: 0 }
+    };
+    // groupBy TipoDoc × segno × aperta (per capire classificazione NC)
+    const byTipo = {}; // key: `${tipo}|${segno>0?'+':'-'}` → { count, sum, esempi: [first 3 num_doc] }
+    const detail = rows.map(r => {
+      const ddoc = isoDate(r.docdatadoc);
+      const dpag = isoDate(r.datapagam);
+      const dscad = isoDate(r.datascad);
+      const saldato = !!r.saldato;
+      const importo = Number(r.importo) || 0;
+      const categ = (r.categpagamento || '').trim();
+      const isRiba = categ.toLowerCase() === 'riba';
+      const isCli  = truthy(r.anagcliente);
+      const isForn = truthy(r.anagfornitore);
+      const tipo = (r.doctipodoc || '').trim().toUpperCase();
+      let isSale, classif;
+      if (tipo.startsWith('U') || tipo.startsWith('A'))      { isSale = false; classif = `tipo=${tipo}→forn`; }
+      else if (tipo && (tipo.startsWith('F') || tipo.startsWith('I') || tipo.startsWith('V') || tipo.startsWith('J')))
+                                                              { isSale = true;  classif = `tipo=${tipo}→cli`; }
+      else if (tipo.startsWith('N'))                          { isSale = importo < 0; classif = `NC→${isSale?'cli':'forn'} (segno)`; }
+      else if (isCli && !isForn)                              { isSale = true;  classif = 'anag=cli'; }
+      else if (isForn && !isCli)                              { isSale = false; classif = 'anag=forn'; }
+      else                                                    { isSale = importo > 0; classif = 'fallback→segno'; }
+
+      const cutoff = isSale ? dataCli : dataForn;
+
+      // Bucket classification
+      let bucket = null, included = true, reason = '';
+      if (importo === 0)         { included = false; reason = 'importo=0'; bucket = 'scartate'; }
+      else if (!ddoc)            { included = false; reason = 'no DataDoc'; bucket = 'scartate'; }
+      else if (ddoc > cutoff)    { included = false; reason = `DataDoc ${ddoc} > cutoff ${cutoff}`; bucket = 'scartate'; }
+      else if (!saldato) {
+        // aperta ordinaria (mai pagata/presentata)
+        bucket = isSale ? 'aperte_ord_cli' : 'aperte_ord_forn';
+      }
+      else if (saldato && dpag && dpag > cutoff) {
+        // pagata dopo il cutoff: al cutoff era ancora aperta
+        bucket = isSale ? 'aperte_ord_cli' : 'aperte_ord_forn';
+      }
+      else if (saldato && isRiba && dscad && dscad > cutoff) {
+        // Ri.Ba. presentata in banca ma scadenza oltre cutoff → ancora in BDM Banca c/effetti
+        bucket = isSale ? 'banca_effetti_cli' : 'banca_effetti_forn';
+      }
+      else {
+        // saldato e pagato entro cutoff → chiusa
+        included = false;
+        reason = `Saldato, DataPagam ${dpag || '∅'} ≤ cutoff ${cutoff}`;
+        bucket = 'chiuse';
+      }
+
+      if (bucket && summaryBuckets[bucket]) {
+        summaryBuckets[bucket].count += 1;
+        summaryBuckets[bucket].sum += importo;
+      }
+
+      // Group by TipoDoc × segno × aperta/chiusa (solo per capire le NC)
+      if (bucket !== 'scartate') {
+        const tk = `${r.doctipodoc || '?'}|${importo >= 0 ? '+' : '-'}|${included ? 'aperta' : 'chiusa'}`;
+        if (!byTipo[tk]) byTipo[tk] = { tipo: r.doctipodoc, segno: importo >= 0 ? '+' : '-', stato: included ? 'aperta' : 'chiusa', count: 0, sum: 0, esempi: [] };
+        byTipo[tk].count += 1;
+        byTipo[tk].sum += importo;
+        if (byTipo[tk].esempi.length < 3) byTipo[tk].esempi.push(r.docnumdoc);
+      }
+
+      if (included) {
+        if (isSale) saldoCli  += importo;
+        else        saldoForn += importo;
+      }
+      return {
+        id: r.idprimanota,
+        num_doc: r.docnumdoc,
+        tipo_doc: r.doctipodoc,
+        data_doc: ddoc,
+        data_scad: dscad,
+        data_pagam: dpag,
+        saldato,
+        importo,
+        categ: r.categpagamento,
+        risorsa: r.risorsa,
+        rata: r.nomepagamdoc,
+        anag_cli: r.anagcliente,
+        anag_forn: r.anagfornitore,
+        classif,
+        is_sale: isSale,
+        cutoff,
+        bucket,
+        included,
+        reason
+      };
+    });
+
+    // round summary
+    for (const k in summaryBuckets) {
+      summaryBuckets[k].sum = Math.round(summaryBuckets[k].sum * 100) / 100;
+    }
+    const byTipoArr = Object.values(byTipo).map(x => ({ ...x, sum: Math.round(x.sum*100)/100 }));
+
+    const filtered = openOnly ? detail.filter(r => r.included) : detail;
+    const payload = {
+      query: q, dataCli, dataForn,
+      count: rows.length,
+      saldoCli: Math.round(saldoCli*100)/100,
+      saldoForn: Math.round(saldoForn*100)/100,
+      saldoNet: Math.round((saldoCli + saldoForn)*100)/100,
+      summary: summaryBuckets,
+      byTipo: byTipoArr
+    };
+    if (!summary) payload.rows = filtered;
+    res.json(payload);
+  } catch(e) {
+    console.error('Errore debug saldi:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -882,8 +1193,9 @@ function calcolaRateDaPagamento(dataDoc, pagamentoDefault) {
 app.get('/api/fatture-sdi', async (req, res) => {
   try {
     const data = loadData();
-    const sdiSaldati  = data.sdi_saldati  || {};
-    const sdiScadenze = data.sdi_scadenze || {};
+    const sdiSaldati     = data.sdi_saldati     || {};
+    const sdiScadenze    = data.sdi_scadenze    || {};
+    const sdiControllate = data.sdi_controllate || {};
 
     // Query 1: fatture TAgyo non ancora registrate in Danea
     // Niente filtro data in SQL (Firebird è sensibile al formato) — filtriamo in JS
@@ -901,20 +1213,112 @@ app.get('/api/fatture-sdi', async (req, res) => {
       return new Date(r.dataricezione) >= cutoff;
     });
 
-    // Query 2: anagrafica fornitori per leggere PagamentoDefault e IBAN
+    // ── ANTI-DOPPIONE ──
+    // Escludi fatture già importate in Danea (presenti in TDocTestate).
+    // Match su: CF/PIVA fornitore + NumDoc + DataDoc (yyyy-mm-dd).
+    // La DataDoc è essenziale perché alcuni fornitori riusano numeri (es. OZNEROL 3,4 ogni anno).
+    const normStr = (s) => (s || '').toString().trim().toUpperCase().replace(/\s+/g, '');
+    const normDate = (d) => {
+      if (!d) return '';
+      try {
+        const dt = new Date(d);
+        return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+      } catch { return ''; }
+    };
+    // Carico TDocTestate una sola volta (ci serve per anti-doppione + IBAN ultima fattura)
+    const docKeySet = new Set();
+    const docIbanByIdAnagr = {};
+    let docRowsAll = [];
+    let anRows = [];
+    try {
+      const res2 = await Promise.all([
+        query(`SELECT "IDDoc","NumDoc","DataDoc","IDAnagr","Pagam_CoordBancarie" FROM "TDocTestate" ORDER BY "IDDoc" DESC`),
+        query(`SELECT * FROM "TAnagrafica"`)
+      ]);
+      docRowsAll = res2[0];
+      anRows = res2[1];
+    } catch(eLoad) {
+      console.warn('Caricamento TDocTestate/TAnagrafica fallito:', eLoad.message);
+    }
+
+    // Mappa CF/PIVA per IDAnagr (usata per chiave deduplica)
+    const cfByIdAnagr = {};
+    anRows.forEach(a => {
+      const cf = (a.codicefiscale || a.codice_fiscale || a.cf || '').toString().trim();
+      const piva = (a.partitaiva || a.partita_iva || a.partiva || a.piva || '').toString().trim();
+      cfByIdAnagr[a.idanagr] = { cf, piva };
+    });
+
+    // Popolo docKeySet (anti-doppione) e docIbanByIdAnagr (IBAN ultima fattura) in un'unica scansione
+    docRowsAll.forEach(d => {
+      // Anti-doppione
+      const num = normStr(d.numdoc);
+      const dataKey = normDate(d.datadoc);
+      if (num && dataKey) {
+        const ana = cfByIdAnagr[d.idanagr] || {};
+        [normStr(ana.cf), normStr(ana.piva)].filter(Boolean).forEach(k => {
+          docKeySet.add(k + '|' + num + '|' + dataKey);
+        });
+      }
+      // IBAN ultima fattura (prende il primo che trova per IDAnagr, ordinato IDDoc DESC)
+      if (d.idanagr != null && !docIbanByIdAnagr[d.idanagr]) {
+        const coord = (d.pagam_coordbancarie || '').trim();
+        if (coord) docIbanByIdAnagr[d.idanagr] = coord;
+      }
+    });
+
+    // Filtra TAgyo rimuovendo fatture già importate in Danea
+    if (docKeySet.size > 0) {
+      rows = rows.filter(r => {
+        const num = normStr(r.numdoc);
+        const dataKey = normDate(r.datadoc);
+        if (!num || !dataKey) return true;
+        const cf = normStr(r.codicefiscale);
+        const piva = normStr(r.partitaiva);
+        const keys = [cf, piva].filter(Boolean).map(k => k + '|' + num + '|' + dataKey);
+        return !keys.some(k => docKeySet.has(k));
+      });
+    }
+
+    // ── DEDUP INTERNO TAGYO ──
+    // TAgyo può contenere più righe per la stessa fattura (IDAgyo diversi).
+    // Teniamo solo il primo (IDAgyo più basso = più vecchio) per ogni chiave CF/PIVA+NumDoc+DataDoc.
+    {
+      const seen = new Set();
+      rows = rows.filter(r => {
+        const num     = normStr(r.numdoc);
+        const dataKey = normDate(r.datadoc);
+        const cf2     = normStr(r.codicefiscale);
+        const piva2   = normStr(r.partitaiva);
+        const primary = cf2 || piva2;
+        if (!primary || !num || !dataKey) return true; // tieni se non abbiamo chiave
+        const k = primary + '|' + num + '|' + dataKey;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    }
+
+    // ── ESCLUSE MANUALMENTE ──
+    const sdiEscluse = data.sdi_escluse || {};
+    rows = rows.filter(r => !sdiEscluse[r.idagyo]);
+
+    // Mappe pagamento/IBAN per anagrafica fornitori
     const pagMap  = {};
     const ibanMap = {};
     const ibanRegex = /[A-Z]{2}\d{2}[A-Z0-9 ]{11,30}/;
     const sdiIbanManuali = data.sdi_iban_manuali || {};
     const sdiNote        = data.sdi_note        || {};
+
     try {
-      const anRows = await query(`SELECT * FROM "TAnagrafica"`);
       anRows.forEach(r => {
         // Includi solo fornitori (campo Fornitore: 'S', 1, true — accetta qualsiasi valore truthy)
         const isFornitore = r.fornitore == 1 || r.fornitore === 'S' || r.fornitore === true;
         if (!isFornitore) return;
         const pag      = r.pagamentodefault || null;
-        const coordRaw = (r.coordbancariedefault || '').trim();
+        // Priorità: 1) Pagam_CoordBancarie da ultima fattura, 2) CoordBancarieDefault anagrafica
+        const coordDoc = docIbanByIdAnagr[r.idanagr] || '';
+        const coordRaw = (coordDoc || r.coordbancariedefault || '').trim();
         const match    = coordRaw.match(ibanRegex);
         const ibanDb   = match ? match[0].replace(/\s/g, '') : null;
         const keys = [];
@@ -963,7 +1367,8 @@ app.get('/api/fatture-sdi', async (req, res) => {
           iban:            ibanMap[cf] || ibanMap[piva] || null,
           iban_manuale:    sdiIbanManuali[cf] || sdiIbanManuali[piva] || null,
           note:            sdiNote[rataId] || '',
-          addebito_diretto: isAddebitoDiretto
+          addebito_diretto: isAddebitoDiretto,
+          controllata:     !!sdiControllate[rataId]
         });
       });
     });
@@ -985,6 +1390,18 @@ app.post('/api/fatture-sdi/set-scadenza', (req, res) => {
   res.json({ ok: true });
 });
 
+/// ─── FATTURE SDI: set/unset flag controllata ─────────────────────────────────
+app.post('/api/fatture-sdi/set-controllata', (req, res) => {
+  const { id, controllata } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const data = loadData();
+  if (!data.sdi_controllate) data.sdi_controllate = {};
+  if (controllata) data.sdi_controllate[id] = { ts: Date.now() };
+  else delete data.sdi_controllate[id];
+  saveData(data);
+  res.json({ ok: true });
+});
+
 /// ─── FATTURE SDI: set nota/riferimento ────────────────────────────────────────
 app.post('/api/fatture-sdi/set-note', (req, res) => {
   const { id, note } = req.body;
@@ -993,6 +1410,18 @@ app.post('/api/fatture-sdi/set-note', (req, res) => {
   if (!data.sdi_note) data.sdi_note = {};
   if (note) data.sdi_note[id] = note;
   else delete data.sdi_note[id];
+  saveData(data);
+  res.json({ ok: true });
+});
+
+// ─── FATTURE SDI: escludi / ripristina ───────────────────────────────────────
+app.post('/api/fatture-sdi/escludi', (req, res) => {
+  const { id_agyo, ripristina } = req.body;
+  if (!id_agyo) return res.status(400).json({ error: 'id_agyo required' });
+  const data = loadData();
+  if (!data.sdi_escluse) data.sdi_escluse = {};
+  if (ripristina) delete data.sdi_escluse[id_agyo];
+  else data.sdi_escluse[id_agyo] = new Date().toISOString();
   saveData(data);
   res.json({ ok: true });
 });
@@ -1098,6 +1527,300 @@ app.post('/api/storico/set-commento', (req, res) => {
   else delete data.storico_commenti[batch_id];
   saveData(data);
   res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── OZNEROL SRL — Fatture Fornitori (solo tracking, no gestionale) ─────────
+// ═══════════════════════════════════════════════════════════════════════════
+const OZNEROL_DATA_FILE = path.join(__dirname, 'oznerol_fatture.json');
+
+function ozLoadData() {
+  try {
+    const d = JSON.parse(fs.readFileSync(OZNEROL_DATA_FILE, 'utf8'));
+    if (!d.fatture)       d.fatture       = [];
+    if (!d.saldati)       d.saldati       = {};
+    if (!d.scadenze)      d.scadenze      = {};
+    if (!d.note)          d.note          = {};
+    if (!d.controllate)   d.controllate   = {};
+    if (!d.iban_manuali)  d.iban_manuali  = {};
+    if (!d.storico)       d.storico       = [];
+    if (!d.xml_map)       d.xml_map       = {};
+    return d;
+  } catch {
+    return { fatture: [], saldati: {}, scadenze: {}, note: {}, controllate: {}, iban_manuali: {}, storico: [], xml_map: {} };
+  }
+}
+function ozSaveData(d) { fs.writeFileSync(OZNEROL_DATA_FILE, JSON.stringify(d, null, 2)); }
+
+function ozNormStr(s) { return (s || '').toString().trim().toUpperCase().replace(/\s+/g,''); }
+
+function ozBuildId(f) {
+  // Chiave univoca: PIVA/CF + numero + data (evita doppioni)
+  const key = ozNormStr(f.piva) || ozNormStr(f.cf);
+  return 'OZ_' + key + '_' + ozNormStr(f.numdoc) + '_' + (f.data_doc || '');
+}
+
+// ─── OZNEROL: GET lista fatture ──────────────────────────────────────────────
+app.get('/api/oznerol/fatture', (req, res) => {
+  try {
+    const d = ozLoadData();
+    const oggi = new Date().toISOString().slice(0,10);
+    // Applica override (scadenze, note, controllate, saldati, iban manuali)
+    const fatture = d.fatture
+      .filter(f => !d.saldati[f.id])
+      .map(f => {
+        const scadOverride = d.scadenze[f.id];
+        const keyId = f.piva || f.cf;
+        return {
+          ...f,
+          scadenza:        scadOverride || f.scadenza || null,
+          scadenza_manual: !!scadOverride,
+          note:            d.note[f.id] || '',
+          controllata:     !!d.controllate[f.id],
+          iban_manuale:    d.iban_manuali[keyId] || null
+        };
+      });
+    const totale = fatture.reduce((s,f) => s + (parseFloat(f.importo)||0), 0);
+    res.json({ fatture, totale, xml_map: d.xml_map || {} });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── OZNEROL: UPLOAD fatture (client-parsed) ────────────────────────────────
+app.post('/api/oznerol/upload', (req, res) => {
+  try {
+    const { fatture, xml_map } = req.body || {};
+    if (!Array.isArray(fatture)) return res.status(400).json({ error: 'fatture array required' });
+
+    const d = ozLoadData();
+    const existingIds = new Set(d.fatture.map(f => f.id));
+    let importate = 0, scartate = 0;
+
+    fatture.forEach(nf => {
+      const numdoc = (nf.numdoc || '').trim();
+      const dataDoc = (nf.data_doc || '').slice(0,10);
+      const importo = parseFloat(nf.importo) || 0;
+      if (!numdoc || !dataDoc) { scartate++; return; }
+      const id = ozBuildId(nf);
+      if (existingIds.has(id)) { scartate++; return; }
+      d.fatture.push({
+        id,
+        piva:     (nf.piva || '').trim(),
+        cf:       (nf.cf || '').trim(),
+        nome:     (nf.nome || '').trim(),
+        numdoc,
+        data_doc: dataDoc,
+        importo,
+        scadenza: nf.scadenza ? nf.scadenza.slice(0,10) : null,
+        iban:     (nf.iban || '').replace(/\s/g,'').toUpperCase() || null,
+        idPaese:  (nf.idPaese || 'IT').toUpperCase(),
+        rata_n:   nf.rata_n || null,
+        source_file: nf.source_file || '',
+        imported_at: new Date().toISOString()
+      });
+      existingIds.add(id);
+      importate++;
+    });
+
+    // Merge XML map
+    if (xml_map && typeof xml_map === 'object') {
+      d.xml_map = Object.assign(d.xml_map || {}, xml_map);
+    }
+
+    // Ordina per data_doc DESC
+    d.fatture.sort((a,b) => (b.data_doc || '').localeCompare(a.data_doc || ''));
+    ozSaveData(d);
+    res.json({ ok: true, importate, scartate, totale: d.fatture.length });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── OZNEROL: set scadenza manuale ───────────────────────────────────────────
+app.post('/api/oznerol/set-scadenza', (req, res) => {
+  const { id, scadenza } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  if (scadenza && !/^\d{4}-\d{2}-\d{2}$/.test(scadenza)) return res.status(400).json({ error: 'formato data non valido' });
+  const d = ozLoadData();
+  if (scadenza) d.scadenze[id] = scadenza;
+  else delete d.scadenze[id];
+  ozSaveData(d);
+  res.json({ ok: true });
+});
+
+// ─── OZNEROL: set nota ──────────────────────────────────────────────────────
+app.post('/api/oznerol/set-note', (req, res) => {
+  const { id, note } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const d = ozLoadData();
+  if (note) d.note[id] = note;
+  else delete d.note[id];
+  ozSaveData(d);
+  res.json({ ok: true });
+});
+
+// ─── OZNEROL: set IBAN manuale per fornitore (per piva/cf) ──────────────────
+app.post('/api/oznerol/set-iban', (req, res) => {
+  const { key, iban } = req.body;
+  if (!key) return res.status(400).json({ error: 'key required' });
+  const d = ozLoadData();
+  if (iban) d.iban_manuali[key] = iban.replace(/\s/g,'').toUpperCase();
+  else delete d.iban_manuali[key];
+  ozSaveData(d);
+  res.json({ ok: true });
+});
+
+// ─── OZNEROL: set flag controllata ──────────────────────────────────────────
+app.post('/api/oznerol/set-controllata', (req, res) => {
+  const { id, controllata } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const d = ozLoadData();
+  if (controllata) d.controllate[id] = { ts: Date.now() };
+  else delete d.controllate[id];
+  ozSaveData(d);
+  res.json({ ok: true });
+});
+
+// ─── OZNEROL: segna come pagate (batch) ─────────────────────────────────────
+app.post('/api/oznerol/segna-pagate', (req, res) => {
+  try {
+    const { ids, data_pagamento, fatture_dettaglio } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids required' });
+    const dataPag = (data_pagamento || new Date().toISOString().slice(0,10)).slice(0,10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataPag)) return res.status(400).json({ error: 'formato data non valido' });
+
+    const d = ozLoadData();
+    const saldatoIl = new Date().toISOString();
+    const dett = fatture_dettaglio || [];
+    ids.forEach(id => {
+      const f = dett.find(x => x.id === id) || d.fatture.find(x => x.id === id) || {};
+      d.saldati[id] = { data_pagamento: dataPag, saldato_il: saldatoIl, nome: f.nome || '', importo: f.importo || 0, numdoc: f.numdoc || '', data_doc: f.data_doc || null };
+    });
+
+    const pagamenti = ids.map(id => { const f = dett.find(x => x.id === id) || d.fatture.find(x => x.id === id) || {}; return { id, nome: f.nome || '', importo: f.importo || 0, numdoc: f.numdoc || '', data_doc: f.data_doc || null }; });
+    const totale = pagamenti.reduce((s, p) => s + (parseFloat(p.importo) || 0), 0);
+    d.storico.push({ batch_id: saldatoIl, data_pagamento: dataPag, saldato_il: saldatoIl, pagamenti, totale });
+    ozSaveData(d);
+    res.json({ ok: true, aggiornati: ids.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── OZNEROL: storico pagamenti ─────────────────────────────────────────────
+app.get('/api/oznerol/storico', (req, res) => {
+  const d = ozLoadData();
+  res.json({ storico: (d.storico || []).slice().reverse() });
+});
+
+// ─── OZNEROL: ripristina saldato (rimette la fattura in lista da pagare) ───
+app.delete('/api/oznerol/saldato/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const d = ozLoadData();
+    const era = !!d.saldati[id];
+    delete d.saldati[id];
+    // Rimuovi la fattura anche da eventuali batch dello storico; scarta i batch rimasti vuoti
+    if (Array.isArray(d.storico)) {
+      d.storico = d.storico
+        .map(b => {
+          const pag = (b.pagamenti || []).filter(p => p.id !== id);
+          const rimosse = (b.pagamenti || []).length - pag.length;
+          if (!rimosse) return b;
+          const nuovoTot = pag.reduce((s, p) => s + (parseFloat(p.importo) || 0), 0);
+          return Object.assign({}, b, { pagamenti: pag, totale: nuovoTot });
+        })
+        .filter(b => (b.pagamenti || []).length > 0);
+    }
+    ozSaveData(d);
+    res.json({ ok: true, era_saldata: era });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── OZNEROL: elimina fattura (hard delete) ─────────────────────────────────
+app.delete('/api/oznerol/fattura/:id', (req, res) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const d = ozLoadData();
+  d.fatture = d.fatture.filter(f => f.id !== id);
+  delete d.scadenze[id];
+  delete d.note[id];
+  delete d.controllate[id];
+  delete d.saldati[id];
+  ozSaveData(d);
+  res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── EBIT/EBITDA SNAPSHOTS — persistenza bilanci trimestrali ────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+const EBIT_DATA_FILE = path.join(__dirname, 'ebit_snapshots.json');
+
+function ebitLoadData() {
+  try {
+    const d = JSON.parse(fs.readFileSync(EBIT_DATA_FILE, 'utf8'));
+    if (!d.snapshots || typeof d.snapshots !== 'object') d.snapshots = {};
+    return d;
+  } catch {
+    return { snapshots: {} };
+  }
+}
+function ebitSaveData(d) { fs.writeFileSync(EBIT_DATA_FILE, JSON.stringify(d, null, 2)); }
+
+// ─── EBIT: GET lista snapshot ────────────────────────────────────────────────
+app.get('/api/ebit/snapshots', (req, res) => {
+  try {
+    const d = ebitLoadData();
+    const list = Object.values(d.snapshots)
+      .map(s => ({
+        id: s.id,
+        date: s.date,
+        previousDate: s.previousDate,
+        companyName: s.companyName,
+        filename: s.filename,
+        uploadedAt: s.uploadedAt,
+        calculated: s.calculated
+      }))
+      .sort((a,b) => (b.date||'').localeCompare(a.date||''));
+    res.json({ snapshots: list });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── EBIT: GET singolo snapshot ──────────────────────────────────────────────
+app.get('/api/ebit/snapshots/:id', (req, res) => {
+  try {
+    const d = ebitLoadData();
+    const s = d.snapshots[req.params.id];
+    if (!s) return res.status(404).json({ error: 'snapshot not found' });
+    res.json(s);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── EBIT: POST salva snapshot ───────────────────────────────────────────────
+app.post('/api/ebit/snapshots', (req, res) => {
+  try {
+    const snap = req.body;
+    if (!snap || !snap.date) return res.status(400).json({ error: 'date required' });
+    const id = snap.id || snap.date;
+    const d = ebitLoadData();
+    d.snapshots[id] = Object.assign({}, snap, {
+      id,
+      uploadedAt: new Date().toISOString()
+    });
+    ebitSaveData(d);
+    res.json({ ok: true, id, overwrite: !!d.snapshots[id] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── EBIT: DELETE snapshot ───────────────────────────────────────────────────
+app.delete('/api/ebit/snapshots/:id', (req, res) => {
+  try {
+    const d = ebitLoadData();
+    const existed = !!d.snapshots[req.params.id];
+    delete d.snapshots[req.params.id];
+    ebitSaveData(d);
+    res.json({ ok: true, existed });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── SAVE SALDO INIZIALE CASHFLOW ─────────────────────────
@@ -1345,6 +2068,2076 @@ REGOLE:
   } catch(e) {
     console.error('[F24-OCR] Errore:', e.message);
     res.status(500).json({ ok:false, error:e.message });
+  }
+});
+
+// ─── DIAGNOSTICA: DOPPIONI TAgyo vs TDocTestate ─────────────────────────────
+// Trova fatture presenti SIA in TAgyo (Fatture da Pagare) SIA in TDocTestate (Pagamenti Fornitori)
+// Matching su CF/PIVA + NumDoc normalizzato
+app.get('/api/fatture-sdi/debug-doppioni', async (req, res) => {
+  try {
+    const norm = (s) => (s || '').toString().trim().toUpperCase().replace(/\s+/g, '');
+    // TAgyo: fatture SDI dal 01/04/2026
+    const agyoRows = await query(`SELECT * FROM "TAgyo" WHERE "Acq" = 1`);
+    const cutoff = new Date('2026-04-01');
+    const agyoFilter = agyoRows.filter(r => r.dataricezione && new Date(r.dataricezione) >= cutoff);
+
+    // TDocTestate: tutte le fatture (uso SELECT * per evitare problemi con case dei nomi colonna)
+    const docRows = await query(`SELECT * FROM "TDocTestate"`);
+    // TAnagrafica: per ricavare CF/PIVA del fornitore associato a IDAnagr
+    const anaRows = await query(`SELECT * FROM "TAnagrafica"`);
+    const anaByIdAnagr = {};
+    anaRows.forEach(a => {
+      // Cerca campi CF e PIVA in modo tollerante (Firebird può usare nomi diversi)
+      const cf = a.codicefiscale || a.codice_fiscale || a.cf || '';
+      const piva = a.partitaiva || a.partita_iva || a.partiva || a.piva || '';
+      anaByIdAnagr[a.idanagr] = { cf, piva, nome: a.nome || '' };
+    });
+
+    // Indicizza TDocTestate per chiave (cf|piva, numdoc)
+    const docIdx = {};
+    docRows.forEach(d => {
+      const num = norm(d.numdoc);
+      if (!num) return;
+      const ana = anaByIdAnagr[d.idanagr] || {};
+      const cf = norm(ana.cf);
+      const piva = norm(ana.piva);
+      [cf, piva].filter(Boolean).forEach(k => {
+        const key = k + '|' + num;
+        if (!docIdx[key]) docIdx[key] = [];
+        docIdx[key].push({ iddoc: d.iddoc, numdoc: d.numdoc, datadoc: d.datadoc, idanagr: d.idanagr, totdapagare: d.totdapagare || d.totdoc, nome: ana.nome });
+      });
+    });
+
+    // Cerca doppioni
+    const doppioni = [];
+    agyoFilter.forEach(r => {
+      const num = norm(r.numdoc);
+      if (!num) return;
+      const cf = norm(r.codicefiscale);
+      const piva = norm(r.partitaiva);
+      const keys = [cf, piva].filter(Boolean).map(k => k + '|' + num);
+      for (const key of keys) {
+        if (docIdx[key] && docIdx[key].length) {
+          doppioni.push({
+            agyo: { idagyo: r.idagyo, nome: r.nome, numdoc: r.numdoc, datadoc: r.datadoc, importo: r.totdovuto, cf: r.codicefiscale, piva: r.partitaiva, dataricezione: r.dataricezione },
+            danea: docIdx[key]
+          });
+          break;
+        }
+      }
+    });
+
+    res.json({
+      agyo_count: agyoFilter.length,
+      docs_count: docRows.length,
+      doppioni_count: doppioni.length,
+      doppioni
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// ─── CHECKLIST MENSILE + TRIMESTRALE ─────────────────────────────────────────
+// Struttura dati:
+//   data.checklist       = { items: [{ id, titolo, createdAt }], stato: { "YYYY-MM": { itemId: { ts } } } }
+//   data.checklist_trim  = { items: [...], stato: { "YYYY-QN": { itemId: { ts } } } }
+
+const _CHK_STORES = {
+  mensile:     { key: 'checklist',      periodoRegex: /^\d{4}-\d{2}$/,     periodoMsg: 'YYYY-MM' },
+  trimestrale: { key: 'checklist_trim', periodoRegex: /^\d{4}-Q[1-4]$/,    periodoMsg: 'YYYY-QN' }
+};
+
+function _chkLoadStore(tipo) {
+  const st = _CHK_STORES[tipo];
+  const data = loadData();
+  if (!data[st.key]) data[st.key] = { items: [], stato: {} };
+  if (!Array.isArray(data[st.key].items)) data[st.key].items = [];
+  if (!data[st.key].stato || typeof data[st.key].stato !== 'object') data[st.key].stato = {};
+  return data;
+}
+
+// Factory: registra 6 endpoint (GET, POST item, PUT item, DELETE item, POST stato, POST move) per un tipo
+function _chkRegisterEndpoints(basePath, tipo) {
+  const st = _CHK_STORES[tipo];
+  const key = st.key;
+
+  app.get(basePath, (req, res) => {
+    const data = _chkLoadStore(tipo);
+    res.json(data[key]);
+  });
+
+  app.post(basePath + '/item', (req, res) => {
+    const { titolo } = req.body || {};
+    if (!titolo || !titolo.trim()) return res.status(400).json({ error: 'titolo required' });
+    const data = _chkLoadStore(tipo);
+    const id = 'chk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    data[key].items.push({ id, titolo: titolo.trim(), createdAt: Date.now() });
+    saveData(data);
+    res.json(data[key]);
+  });
+
+  app.put(basePath + '/item', (req, res) => {
+    const { id, titolo } = req.body || {};
+    if (!id || !titolo || !titolo.trim()) return res.status(400).json({ error: 'id e titolo required' });
+    const data = _chkLoadStore(tipo);
+    const it = data[key].items.find(x => x.id === id);
+    if (!it) return res.status(404).json({ error: 'item not found' });
+    it.titolo = titolo.trim();
+    saveData(data);
+    res.json(data[key]);
+  });
+
+  app.delete(basePath + '/item', (req, res) => {
+    const id = req.query.id;
+    if (!id) return res.status(400).json({ error: 'id required' });
+    const data = _chkLoadStore(tipo);
+    data[key].items = data[key].items.filter(x => x.id !== id);
+    saveData(data);
+    res.json(data[key]);
+  });
+
+  // Accetta sia { periodo } (nuovo) che { mese } (legacy per compatibilità)
+  app.post(basePath + '/stato', (req, res) => {
+    const body = req.body || {};
+    const periodo = body.periodo || body.mese;
+    const { id, fatta } = body;
+    if (!id || !periodo) return res.status(400).json({ error: 'id e periodo required' });
+    if (!st.periodoRegex.test(periodo)) return res.status(400).json({ error: 'periodo formato ' + st.periodoMsg });
+    const data = _chkLoadStore(tipo);
+    if (!data[key].stato[periodo]) data[key].stato[periodo] = {};
+    if (fatta) data[key].stato[periodo][id] = { ts: Date.now() };
+    else delete data[key].stato[periodo][id];
+    saveData(data);
+    res.json(data[key]);
+  });
+
+  // Sposta item su/giù nell'array items
+  app.post(basePath + '/item/move', (req, res) => {
+    const { id, direction } = req.body || {};
+    if (!id || (direction !== 'up' && direction !== 'down')) return res.status(400).json({ error: 'id e direction (up|down) required' });
+    const data = _chkLoadStore(tipo);
+    const arr = data[key].items;
+    const idx = arr.findIndex(x => x.id === id);
+    if (idx < 0) return res.status(404).json({ error: 'item not found' });
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (newIdx < 0 || newIdx >= arr.length) return res.json(data[key]); // già al limite, no-op
+    const [moved] = arr.splice(idx, 1);
+    arr.splice(newIdx, 0, moved);
+    saveData(data);
+    res.json(data[key]);
+  });
+}
+
+_chkRegisterEndpoints('/api/checklist',      'mensile');
+_chkRegisterEndpoints('/api/checklist-trim', 'trimestrale');
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── PARTITARI CONTABILITÀ (CSV importati dal commercialista) ───────────────
+// ═════════════════════════════════════════════════════════════════════════════
+const PARTITARI_DIR = path.join(__dirname, 'partitari');
+if (!fs.existsSync(PARTITARI_DIR)) fs.mkdirSync(PARTITARI_DIR, { recursive: true });
+
+// Cache: snapshot (es. "20260331") → dati parsati
+const _partitariCache = {};
+
+function _partNum(s) {
+  if (s == null || s === '') return 0;
+  const n = String(s).trim().replace(/\./g, '').replace(',', '.');
+  const v = parseFloat(n);
+  return isNaN(v) ? 0 : v;
+}
+
+function _partDate(s) {
+  if (!s) return null;
+  const m = String(s).trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+// Parser CSV semplice per separatore ';' (formato Zucchetti/Nuova Informatica)
+// Il file in esame NON usa quoting: basta split su ';'. Gestisco comunque il quoting "..."
+function _parseCsvLine(line) {
+  const out = [];
+  let cur = '';
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"') {
+        if (line[i+1] === '"') { cur += '"'; i++; }
+        else inQ = false;
+      } else cur += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ';') { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+function parsePartitariCsv(filePath) {
+  const txt = fs.readFileSync(filePath, 'utf8');
+  const lines = txt.split(/\r?\n/).filter(l => l.length > 0);
+  if (lines.length < 2) return { header: {}, sottoconti: {} };
+
+  // Header columns (indici che ci servono)
+  const H = _parseCsvLine(lines[0]);
+  const idx = name => H.findIndex(h => h.trim().toUpperCase() === name.toUpperCase());
+
+  const I = {
+    sogg:        idx('DENOMINAZIONE'),
+    esercizio:   idx('ESERCIZIO'),
+    inizio:      idx('INIZIO ESERCIZIO'),
+    fine:        idx('FINE ESERCIZIO'),
+    // Riga "saldo esercizio precedente"
+    sc_prec:     idx('S/C SALDO ES. PREC'),
+    descr_prec:  idx('DESCR. S/C SALDO ES. PREC.'),
+    cf_prec:     idx('CLI/FOR SALDO ES. PREC'),
+    codcf_prec:  idx('COD. CLI/FOR SALDO ES. PREC.'),
+    sez_prec:    idx('SEZ.SALDO ES. PREC.'),
+    sald_prec:   idx('SALDO ES.PREC.'),
+    tipo_prec:   idx('TIPO SALDO ES.PREC.'),
+    // Riga movimento
+    sc:          idx('SOTTOCONTO'),
+    codcf:       idx('COD.CLI/FOR'),
+    descr_sc:    idx('DESCRIZ. S/C'),
+    descr_cf:    idx('DESCR. CLI/FOR'),
+    cf:          idx('CODICE FISCALE'),
+    piva:        idx('PARTITA IVA'),
+    data_reg:    idx('DATA REGISTRAZIONE'),
+    prot:        idx('PROT.'),
+    data_doc:    idx('DATA DOCUMENTO'),
+    nr_doc:      idx('NR.DOC.'),
+    sez:         idx('SEZ.SALDO'),
+    saldo:       idx('SALDO'),
+    dare:        idx('DARE'),
+    avere:       idx('AVERE'),
+    contro:      idx('CONTROPARTITA'),
+    diversi:     idx('DIVERSI'),
+    descr:       idx('DESCRIZIONE'),
+    descr_riga:  idx('DESCRIZIONE RIGA')
+  };
+
+  const sottoconti = {};     // key: code → { code, nome, has_cli_for, saldo_iniziale, totali, movimenti:[], cli_for:{} }
+  let soggetto = null, esercizio = null, inizio = null, fine = null;
+
+  function getOrCreateSottoconto(code, nome) {
+    if (!sottoconti[code]) {
+      sottoconti[code] = {
+        codice: code,
+        descrizione: nome || '',
+        has_cli_for: false,
+        saldo_iniziale: null,
+        totali: { dare: 0, avere: 0 },
+        movimenti: [],
+        cli_for: {}
+      };
+    } else if (nome && !sottoconti[code].descrizione) {
+      sottoconti[code].descrizione = nome;
+    }
+    return sottoconti[code];
+  }
+
+  function getOrCreateCliFor(sc, codcf, descrcf, cf, piva) {
+    sc.has_cli_for = true;
+    if (!sc.cli_for[codcf]) {
+      sc.cli_for[codcf] = {
+        codice: codcf,
+        descrizione: descrcf || '',
+        cf: cf || '',
+        piva: piva || '',
+        saldo_iniziale: null,
+        totali: { dare: 0, avere: 0 },
+        movimenti: []
+      };
+    } else {
+      const c = sc.cli_for[codcf];
+      if (descrcf && !c.descrizione) c.descrizione = descrcf;
+      if (cf && !c.cf) c.cf = cf;
+      if (piva && !c.piva) c.piva = piva;
+    }
+    return sc.cli_for[codcf];
+  }
+
+  for (let i = 1; i < lines.length; i++) {
+    const r = _parseCsvLine(lines[i]);
+    if (!soggetto) soggetto = r[I.sogg];
+    if (!esercizio) esercizio = r[I.esercizio];
+    if (!inizio) inizio = r[I.inizio];
+    if (!fine)   fine   = r[I.fine];
+
+    const tipoPrec = (r[I.tipo_prec] || '').trim();
+    const scPrec   = (r[I.sc_prec]   || '').trim();
+    const scMov    = (r[I.sc]        || '').trim();
+
+    // Riga SALDO ESERCIZIO PRECEDENTE
+    if (tipoPrec && scPrec) {
+      const sc = getOrCreateSottoconto(scPrec, (r[I.descr_prec]||'').trim());
+      const sez = (r[I.sez_prec] || 'D').trim();
+      const imp = _partNum(r[I.sald_prec]);
+      const codcf = (r[I.codcf_prec] || '').trim();
+      const descrcf = (r[I.cf_prec] || '').trim();
+      if (codcf || descrcf) {
+        const c = getOrCreateCliFor(sc, codcf, descrcf, '', '');
+        c.saldo_iniziale = { sez, importo: imp };
+      } else {
+        sc.saldo_iniziale = { sez, importo: imp };
+      }
+      continue;
+    }
+
+    // Riga movimento
+    if (scMov) {
+      const sc = getOrCreateSottoconto(scMov, (r[I.descr_sc]||'').trim());
+      const codcf = (r[I.codcf] || '').trim();
+      const descrcf = (r[I.descr_cf] || '').trim();
+      const target = (codcf || descrcf)
+        ? getOrCreateCliFor(sc, codcf, descrcf, (r[I.cf]||'').trim(), (r[I.piva]||'').trim())
+        : sc;
+
+      const dare  = _partNum(r[I.dare]);
+      const avere = _partNum(r[I.avere]);
+
+      const mov = {
+        data_reg:   _partDate(r[I.data_reg]),
+        protocollo: (r[I.prot] || '').trim(),
+        data_doc:   _partDate(r[I.data_doc]),
+        nr_doc:     (r[I.nr_doc] || '').trim(),
+        sez:        (r[I.sez] || '').trim(),
+        saldo:      _partNum(r[I.saldo]),
+        dare, avere,
+        contropartita: (r[I.contro] || '').trim(),
+        diversi:       (r[I.diversi] || '').trim(),
+        descrizione:   (r[I.descr] || '').trim(),
+        descrizione_riga: (r[I.descr_riga] || '').trim()
+      };
+
+      target.movimenti.push(mov);
+      target.totali.dare  += dare;
+      target.totali.avere += avere;
+      if (target !== sc) {
+        sc.totali.dare  += dare;
+        sc.totali.avere += avere;
+      }
+    }
+  }
+
+  // Calcola saldo finale per ogni sottoconto e cli/for
+  for (const code of Object.keys(sottoconti)) {
+    const sc = sottoconti[code];
+    const si = sc.saldo_iniziale;
+    const siSigned = si ? (si.sez === 'D' ? si.importo : -si.importo) : 0;
+    sc.totali.saldo_finale = siSigned + sc.totali.dare - sc.totali.avere;
+    sc.totali.saldo_iniziale = siSigned;
+    for (const codcf of Object.keys(sc.cli_for)) {
+      const c = sc.cli_for[codcf];
+      const csi = c.saldo_iniziale;
+      const csiSigned = csi ? (csi.sez === 'D' ? csi.importo : -csi.importo) : 0;
+      c.totali.saldo_finale = csiSigned + c.totali.dare - c.totali.avere;
+      c.totali.saldo_iniziale = csiSigned;
+    }
+  }
+
+  return {
+    header: { soggetto, esercizio, inizio, fine },
+    sottoconti
+  };
+}
+
+function _partitariLoad(snapshot) {
+  if (_partitariCache[snapshot]) return _partitariCache[snapshot];
+  const p = path.join(PARTITARI_DIR, `partitari_${snapshot}.csv`);
+  if (!fs.existsSync(p)) throw new Error(`Snapshot non trovato: ${snapshot}`);
+  const parsed = parsePartitariCsv(p);
+  _partitariCache[snapshot] = parsed;
+  return parsed;
+}
+
+// GET /api/partitari/snapshots — elenca snapshot disponibili
+app.get('/api/partitari/snapshots', (req, res) => {
+  try {
+    const files = fs.readdirSync(PARTITARI_DIR).filter(f => /^partitari_\d{8}\.csv$/.test(f));
+    const list = files.map(f => {
+      const m = f.match(/partitari_(\d{4})(\d{2})(\d{2})\.csv/);
+      const iso = `${m[1]}-${m[2]}-${m[3]}`;
+      const display = `${m[3]}/${m[2]}/${m[1]}`;
+      return { file: f, snapshot: m[1]+m[2]+m[3], iso, display };
+    }).sort((a,b) => b.snapshot.localeCompare(a.snapshot));
+    res.json({ snapshots: list });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/partitari/sottoconti?snapshot=YYYYMMDD — lista sottoconti con saldi riassuntivi
+app.get('/api/partitari/sottoconti', (req, res) => {
+  try {
+    const snap = req.query.snapshot;
+    if (!snap) return res.status(400).json({ error: 'snapshot mancante' });
+    const data = _partitariLoad(snap);
+    const list = Object.values(data.sottoconti).map(sc => ({
+      codice: sc.codice,
+      descrizione: sc.descrizione,
+      has_cli_for: sc.has_cli_for,
+      n_cli_for: Object.keys(sc.cli_for).length,
+      n_movimenti: sc.movimenti.length + Object.values(sc.cli_for).reduce((s,c)=>s+c.movimenti.length, 0),
+      saldo_iniziale: sc.totali.saldo_iniziale || 0,
+      dare: sc.totali.dare,
+      avere: sc.totali.avere,
+      saldo_finale: sc.totali.saldo_finale
+    })).sort((a,b) => a.codice.localeCompare(b.codice));
+    res.json({ header: data.header, sottoconti: list });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/partitari?snapshot=YYYYMMDD&sottoconto=CODE[&cli_for=CODE]
+// Restituisce dettaglio movimenti. Se sottoconto ha cli/for e cli_for non specificato,
+// restituisce l'elenco dei cli/for con saldi. Se cli_for='__ALL__', tutti i movimenti aggregati.
+app.get('/api/partitari', (req, res) => {
+  try {
+    const snap = req.query.snapshot;
+    const scCode = req.query.sottoconto;
+    const cliFor = req.query.cli_for;
+    if (!snap || !scCode) return res.status(400).json({ error: 'snapshot e sottoconto richiesti' });
+    const data = _partitariLoad(snap);
+    const sc = data.sottoconti[scCode];
+    if (!sc) return res.status(404).json({ error: 'sottoconto non trovato' });
+
+    if (sc.has_cli_for && !cliFor) {
+      // Restituisce elenco cli/for
+      const list = Object.values(sc.cli_for).map(c => ({
+        codice: c.codice,
+        descrizione: c.descrizione,
+        cf: c.cf, piva: c.piva,
+        saldo_iniziale: c.totali.saldo_iniziale || 0,
+        dare: c.totali.dare,
+        avere: c.totali.avere,
+        saldo_finale: c.totali.saldo_finale,
+        n_movimenti: c.movimenti.length
+      })).sort((a,b) => (a.descrizione||'').localeCompare(b.descrizione||''));
+      return res.json({
+        header: data.header,
+        sottoconto: { codice: sc.codice, descrizione: sc.descrizione, has_cli_for: true, totali: sc.totali },
+        cli_for: list
+      });
+    }
+
+    if (sc.has_cli_for && cliFor && cliFor !== '__ALL__') {
+      const c = sc.cli_for[cliFor];
+      if (!c) return res.status(404).json({ error: 'cli/for non trovato' });
+      return res.json({
+        header: data.header,
+        sottoconto: { codice: sc.codice, descrizione: sc.descrizione, has_cli_for: true },
+        cli_for: {
+          codice: c.codice, descrizione: c.descrizione, cf: c.cf, piva: c.piva,
+          saldo_iniziale: c.saldo_iniziale, totali: c.totali, movimenti: c.movimenti
+        }
+      });
+    }
+
+    // Sottoconto generico o richiesta __ALL__
+    let mov = sc.movimenti.slice();
+    if (sc.has_cli_for && cliFor === '__ALL__') {
+      Object.values(sc.cli_for).forEach(c => {
+        c.movimenti.forEach(m => mov.push(Object.assign({}, m, { _cf_cod: c.codice, _cf_nome: c.descrizione })));
+      });
+    }
+    mov.sort((a,b) => (a.data_reg||'').localeCompare(b.data_reg||''));
+
+    return res.json({
+      header: data.header,
+      sottoconto: {
+        codice: sc.codice, descrizione: sc.descrizione, has_cli_for: sc.has_cli_for,
+        saldo_iniziale: sc.saldo_iniziale, totali: sc.totali
+      },
+      movimenti: mov
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/partitari/cli-for-all?snapshot=YYYYMMDD&tipo=clienti|fornitori|all&prefix=...
+// Restituisce flat list di tutti i cli/for codificati (per popolare dropdown "sposta anticipo")
+app.get('/api/partitari/cli-for-all', (req, res) => {
+  try {
+    let snap = req.query.snapshot;
+    const tipo = (req.query.tipo || 'all').toLowerCase();
+    const prefix = (req.query.prefix || '').trim();
+
+    // Se snapshot non fornita, usa la più recente
+    if (!snap) {
+      const files = fs.readdirSync(PARTITARI_DIR).filter(f => /^partitari_\d{8}\.csv$/.test(f));
+      if (!files.length) return res.json({ snapshot: null, items: [] });
+      const latest = files.map(f => f.match(/partitari_(\d{8})\.csv/)[1]).sort().pop();
+      snap = latest;
+    }
+
+    const data = _partitariLoad(snap);
+    const items = [];
+    for (const code of Object.keys(data.sottoconti)) {
+      const sc = data.sottoconti[code];
+      if (!sc.has_cli_for) continue;
+      if (prefix && !code.startsWith(prefix)) continue;
+      const descU = (sc.descrizione || '').toUpperCase();
+      // Filtro per tipo
+      if (tipo === 'clienti' && !/CLIENT/.test(descU)) continue;
+      if (tipo === 'fornitori' && !/FORNIT/.test(descU)) continue;
+
+      for (const codcf of Object.keys(sc.cli_for)) {
+        const c = sc.cli_for[codcf];
+        items.push({
+          sottoconto: sc.codice,
+          sottoconto_descr: sc.descrizione,
+          codice: c.codice,
+          descrizione: c.descrizione,
+          cf: c.cf || '',
+          piva: c.piva || '',
+          saldo_finale: c.totali.saldo_finale,
+          n_movimenti: c.movimenti.length
+        });
+      }
+    }
+    items.sort((a,b) => (a.descrizione||'').localeCompare(b.descrizione||''));
+    res.json({ snapshot: snap, items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/partitari/upload — upload di un nuovo CSV (atteso multipart o JSON con {name, content_base64})
+app.post('/api/partitari/upload', express.json({ limit: '30mb' }), (req, res) => {
+  try {
+    const { snapshot, content_base64, confirm_overwrite } = req.body || {};
+    if (!snapshot || !/^\d{8}$/.test(String(snapshot))) {
+      return res.status(400).json({ error: 'snapshot (YYYYMMDD) richiesto' });
+    }
+    if (!content_base64) return res.status(400).json({ error: 'content_base64 mancante' });
+    const buf = Buffer.from(content_base64, 'base64');
+    // Verifica che sia un CSV plausibile (prima riga contiene ";")
+    const first = buf.slice(0, 200).toString('utf8');
+    if (!first.includes(';')) return res.status(400).json({ error: 'il file non sembra un CSV con separatore ";"' });
+    const p = path.join(PARTITARI_DIR, `partitari_${snapshot}.csv`);
+    const esisteGia = fs.existsSync(p);
+    // Se lo snapshot esiste già e il client non ha confermato, richiedi conferma
+    if (esisteGia && !confirm_overwrite) {
+      const st = fs.statSync(p);
+      return res.status(409).json({
+        error: 'snapshot_esistente',
+        message: `Lo snapshot ${snapshot} esiste già (${(st.size/1024).toFixed(1)} KB, caricato ${st.mtime.toISOString().slice(0,10)}). Vuoi sovrascriverlo?`,
+        existing: { bytes: st.size, mtime: st.mtime.toISOString() }
+      });
+    }
+    fs.writeFileSync(p, buf);
+    delete _partitariCache[snapshot];
+    res.json({ ok: true, file: path.basename(p), bytes: buf.length, sovrascritto: esisteGia });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/partitari/snapshot/:snapshot — elimina uno snapshot
+app.delete('/api/partitari/snapshot/:snapshot', (req, res) => {
+  try {
+    const snap = req.params.snapshot;
+    if (!snap || !/^\d{8}$/.test(snap)) return res.status(400).json({ error: 'snapshot non valido' });
+    const p = path.join(PARTITARI_DIR, `partitari_${snap}.csv`);
+    if (!fs.existsSync(p)) return res.status(404).json({ error: 'snapshot non trovato' });
+    fs.unlinkSync(p);
+    delete _partitariCache[snap];
+    res.json({ ok: true, eliminato: path.basename(p) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── ANTICIPI (DA CLIENTI + A FORNITORI) ───────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// Due persistenze parallele (anticipi_clienti.json, anticipi_fornitori.json)
+// condividono stessi helper e stessa shape, cambiando solo il campo soggetto:
+//   - clienti   → campo `cliente`
+//   - fornitori → campo `fornitore`
+const ANTICIPI_FILES = {
+  clienti:   path.join(__dirname, 'anticipi_clienti.json'),
+  fornitori: path.join(__dirname, 'anticipi_fornitori.json')
+};
+// Nome campo soggetto nel JSON/API per tipo
+const ANTICIPI_SOGG_KEY = { clienti: 'cliente', fornitori: 'fornitore' };
+// File legacy (senza suffisso tipo) — retrocompat con vecchi caller
+const ANTICIPI_FILE = ANTICIPI_FILES.clienti;
+
+function _anticipiTipoOrDie(tipo) {
+  const t = (tipo || 'clienti').toLowerCase();
+  if (t !== 'clienti' && t !== 'fornitori') throw new Error('tipo deve essere "clienti" o "fornitori"');
+  return t;
+}
+
+function _anticipiDefault(tipo) {
+  const t = _anticipiTipoOrDie(tipo);
+  const titolo = t === 'clienti' ? 'ANTICIPI DA CLIENTI AEC' : 'ANTICIPI A FORNITORI AEC';
+  return {
+    data_riferimento: new Date().toISOString().slice(0,10),
+    titolo,
+    soggetto: 'AEC INTERNATIONAL SRL',
+    anticipi: []
+  };
+}
+
+function _anticipiLoad(tipo) {
+  const t = _anticipiTipoOrDie(tipo);
+  try {
+    const d = JSON.parse(fs.readFileSync(ANTICIPI_FILES[t], 'utf8'));
+    if (!Array.isArray(d.anticipi)) d.anticipi = [];
+    return d;
+  } catch {
+    return _anticipiDefault(t);
+  }
+}
+
+function _anticipiSave(tipo, d) {
+  const t = _anticipiTipoOrDie(tipo);
+  fs.writeFileSync(ANTICIPI_FILES[t], JSON.stringify(d, null, 2));
+}
+
+function _anticipiNextId(anticipi) {
+  const nums = anticipi.map(a => {
+    const m = (a.id||'').match(/^a_(\d+)$/);
+    return m ? parseInt(m[1],10) : 0;
+  });
+  const max = nums.length ? Math.max.apply(null, nums) : 0;
+  return 'a_' + String(max+1).padStart(3,'0');
+}
+
+// Registra i 5 endpoint CRUD per uno dei due tipi
+function _anticipiMountCrud(tipo) {
+  const t = _anticipiTipoOrDie(tipo);
+  const soggKey = ANTICIPI_SOGG_KEY[t];
+  const base = `/api/anticipi-${t}`;
+
+  // GET — tutti gli anticipi
+  app.get(base, (req, res) => {
+    res.json(_anticipiLoad(t));
+  });
+
+  // POST — aggiunge o modifica (se id fornito)
+  app.post(base, (req, res) => {
+    try {
+      const d = _anticipiLoad(t);
+      const body = req.body || {};
+      const id = body.id;
+      // retrocompat: accetta sia "cliente" che "fornitore" nel body
+      const sogg = (body[soggKey] || body.cliente || body.fornitore || '').trim();
+
+      const row = {
+        id: id || _anticipiNextId(d.anticipi),
+        anno: parseInt(body.anno, 10) || new Date().getFullYear(),
+        data: body.data || null,
+        [soggKey]: sogg,
+        importo: Number(body.importo) || 0,
+        nota: (body.nota || '').trim(),
+        spostato: !!body.spostato,
+        spostato_il: body.spostato_il || null,
+        sottoconto_target: body.sottoconto_target || null,
+        cli_for_target: body.cli_for_target || null,
+        note_spostamento: (body.note_spostamento || '').trim()
+      };
+
+      if (id) {
+        const i = d.anticipi.findIndex(a => a.id === id);
+        if (i < 0) return res.status(404).json({ error: 'non trovato' });
+        d.anticipi[i] = Object.assign({}, d.anticipi[i], row);
+      } else {
+        d.anticipi.push(row);
+      }
+      _anticipiSave(t, d);
+      res.json({ ok: true, anticipo: row });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // DELETE :id
+  app.delete(`${base}/:id`, (req, res) => {
+    try {
+      const d = _anticipiLoad(t);
+      const i = d.anticipi.findIndex(a => a.id === req.params.id);
+      if (i < 0) return res.status(404).json({ error: 'non trovato' });
+      d.anticipi.splice(i, 1);
+      _anticipiSave(t, d);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST :id/sposta — marca come spostato / ripristina
+  app.post(`${base}/:id/sposta`, (req, res) => {
+    try {
+      const d = _anticipiLoad(t);
+      const i = d.anticipi.findIndex(a => a.id === req.params.id);
+      if (i < 0) return res.status(404).json({ error: 'non trovato' });
+      const { spostato, sottoconto_target, cli_for_target, note_spostamento } = req.body || {};
+      d.anticipi[i].spostato = !!spostato;
+      d.anticipi[i].spostato_il = spostato ? (new Date().toISOString()) : null;
+      if (sottoconto_target !== undefined) d.anticipi[i].sottoconto_target = sottoconto_target || null;
+      if (cli_for_target !== undefined)    d.anticipi[i].cli_for_target = cli_for_target || null;
+      if (note_spostamento !== undefined)  d.anticipi[i].note_spostamento = note_spostamento || '';
+      _anticipiSave(t, d);
+      res.json({ ok: true, anticipo: d.anticipi[i] });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST import-csv — massivo (CSV ;)
+  // Formato atteso: Anno;Data (YYYY-MM-DD o DD/MM/YYYY);<Cliente|Fornitore>;Importo;Nota
+  app.post(`${base}/import-csv`, (req, res) => {
+    try {
+      const csv = (req.body && req.body.csv) || '';
+      const replace = !!(req.body && req.body.replace);
+      if (!csv) return res.status(400).json({ error: 'csv mancante' });
+
+      const lines = csv.split(/\r?\n/).filter(l => l.trim());
+      if (!lines.length) return res.status(400).json({ error: 'csv vuoto' });
+
+      // Skip header se inizia con "Anno" o similari (accetta cliente/fornitore/soggetto)
+      let startIdx = 0;
+      const firstCells = _parseCsvLine(lines[0]).map(s => (s||'').toLowerCase());
+      if (firstCells.some(c => c.includes('anno') || c.includes('cliente') || c.includes('fornitore') || c.includes('soggetto') || c.includes('importo'))) startIdx = 1;
+
+      const rows = [];
+      for (let i = startIdx; i < lines.length; i++) {
+        const c = _parseCsvLine(lines[i]);
+        if (!c.length) continue;
+        const anno = parseInt(c[0], 10);
+        const rawDate = (c[1] || '').trim();
+        const dataIso = rawDate.match(/^\d{4}-\d{2}-\d{2}/) ? rawDate :
+          (rawDate.match(/^(\d{2})\/(\d{2})\/(\d{4})/) ? `${RegExp.$3}-${RegExp.$2}-${RegExp.$1}` : null);
+        const sogg = (c[2] || '').trim();
+        const importo = _partNum(c[3]);
+        const nota = (c[4] || '').trim();
+        if (!sogg || !importo) continue;
+        rows.push({ anno: anno || new Date().getFullYear(), data: dataIso, [soggKey]: sogg, importo, nota });
+      }
+
+      const d = _anticipiLoad(t);
+      if (replace) d.anticipi = [];
+      rows.forEach(r => {
+        d.anticipi.push({
+          id: _anticipiNextId(d.anticipi),
+          anno: r.anno, data: r.data, [soggKey]: r[soggKey], importo: r.importo, nota: r.nota,
+          spostato: false, spostato_il: null,
+          sottoconto_target: null, cli_for_target: null, note_spostamento: ''
+        });
+      });
+      _anticipiSave(t, d);
+      res.json({ ok: true, importati: rows.length, totale: d.anticipi.length });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+}
+
+// Mount per entrambi i tipi
+_anticipiMountCrud('clienti');
+_anticipiMountCrud('fornitori');
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── PARTITARI DANEA (ricostruiti da TDocTestate + TPrimaNota) ──────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// TipoDoc contabili Danea Easyfatt (verificati su DB AEC — aprile 2026)
+//   CLIENTI   (vendita):  F = Fattura immediata, I = Fattura Accompagnatoria, N = NC cliente
+//   FORNITORI (acquisto): U = Fattura fornitore, N = NC fornitore
+//
+// AEC emette prevalentemente fatture accompagnatorie (I) insieme alla merce, non F.
+// I TipoDoc NON contabili (scarta da partitari): C=ord.cliente, D=DDT emesso,
+//   E=ordine fornitore, H=arrivo/carico magazzino, Q=preventivo, G=ord.fornitore (raro).
+//
+// NOTA su 'N' (dual-role): un'anagrafica con Cliente=1 AND Fornitore=1 potrebbe avere
+// sia NCV (nota credito vendita) che NCA (nota credito acquisto), entrambe con TipoDoc=N.
+// La classificazione dare/avere è già corretta (segno TotDoc × ruolo), ma se vedi
+// una NCV che "inquina" il partitario fornitore di un dual-role controlla il segno.
+//
+// Verificato con: /api/debug/fornitori-tipodoc → 'U' è il 73% dei documenti
+// post-2026-01-01 per anagrafiche Fornitore=1 (315 fatture, €1,18M).
+const DANEA_TIPODOC_CLIENTI   = ['F', 'I', 'N'];
+const DANEA_TIPODOC_FORNITORI = ['U', 'N'];
+
+// ─── CUTOFF 01/01/2026: NON importiamo nessun movimento Danea < CUTOFF. ──────
+//   Il saldo iniziale al 01/01/2026 viene letto dal PDF ufficiale di bilancio
+//   (saldi_iniziali_2026.json) — non è più calcolato sommando lo storico Danea.
+// Se in futuro si cambierà esercizio basterà bumpare queste due costanti e
+// rigenerare il JSON dei saldi.
+const DANEA_CUTOFF         = '2026-01-01';  // fiscal-year opening
+const DANEA_CUTOFF_DEFAULT = DANEA_CUTOFF;  // compat. alias (vecchie chiamate)
+
+// _isoFrom: forziamo SEMPRE il cutoff. Il parametro ?from= è ormai ignorato
+// (lo lasciamo nella signature per retro-compatibilità con i caller esistenti).
+function _isoFrom(/* q, alIso */) {
+  return DANEA_CUTOFF;
+}
+// Parametro "al" (data fine): null se non specificato
+function _isoAl(q) {
+  const s = (q || '').toString().trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return null;
+}
+
+// ─── SALDI INIZIALI 01/01/2026 (da PDF bilancio) ────────────────────────────
+// Caricati una volta a startup da saldi_iniziali_2026.json e indicizzati per
+// nome normalizzato + ruolo. Matching case/punteggiatura-insensitive.
+const SALDI_INIZIALI_FILE = path.join(__dirname, 'saldi_iniziali_2026.json');
+let _saldiIniziali = null;      // oggetto crudo del JSON
+let _saldiIndexCli = new Map(); // nomeNorm -> [entry, ...] per clienti
+let _saldiIndexFor = new Map(); // nomeNorm -> [entry, ...] per fornitori
+
+// Normalizza nome per lookup: UPPER, niente accenti/punteggiatura, compatta
+// sequenze di iniziali singole ("S R L" → "SRL", "C T S" → "CTS") e rimuove
+// forme societarie comuni. Unifica "DURANTE S.R.L." / "DURANTE SRL" / "Durante Srl".
+function _normNome(s) {
+  let x = (s || '').toString()
+    .toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // accenti
+    .replace(/[^A-Z0-9 ]+/g, ' ')                      // punteggiatura → spazio
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Compatta sequenze di iniziali singole ("S R L" → "SRL", "C T S" → "CTS")
+  x = x.replace(/\b[A-Z](?:\s[A-Z]\b)+/g, m => m.replace(/\s/g, ''));
+  // Rimuovi forme societarie compatte
+  x = x.replace(/\b(SRL|SRLS|SPA|SAS|SNC|SCOOP|SOCIETA|SOC|COOP|COOPERATIVA|UNIPERSONALE|LTD|LLC|GMBH|SA|AG|BV|INC|CORP|CO)\b/g, '');
+  // Rimuovi "& C", "E C" e "DI XXX" (distrae nei match)
+  x = x.replace(/\b(E|&)\s*C\b/g, '');
+  x = x.replace(/\s+/g, ' ').trim();
+  return x;
+}
+
+function _saldiInizialiLoad() {
+  try {
+    const raw = fs.readFileSync(SALDI_INIZIALI_FILE, 'utf8');
+    _saldiIniziali = JSON.parse(raw);
+  } catch (e) {
+    console.warn('[saldi_iniziali] File non trovato o invalido:', e.message);
+    _saldiIniziali = { _meta: {}, clienti: [], fornitori: [] };
+  }
+  _saldiIndexCli = new Map();
+  _saldiIndexFor = new Map();
+  (_saldiIniziali.clienti || []).forEach(e => {
+    const k = _normNome(e.nome);
+    if (!_saldiIndexCli.has(k)) _saldiIndexCli.set(k, []);
+    _saldiIndexCli.get(k).push(e);
+  });
+  (_saldiIniziali.fornitori || []).forEach(e => {
+    const k = _normNome(e.nome);
+    if (!_saldiIndexFor.has(k)) _saldiIndexFor.set(k, []);
+    _saldiIndexFor.get(k).push(e);
+  });
+  console.log(`[saldi_iniziali] Caricato: ${(_saldiIniziali.clienti||[]).length} clienti, ${(_saldiIniziali.fornitori||[]).length} fornitori.`);
+}
+_saldiInizialiLoad();
+
+// Lookup saldo iniziale per anagrafica:
+// - Ritorna { saldo_signed, entries: [...], match_type: 'exact'|'partial'|'none' }
+// - Se più sottoconti (es. DURANTE in 102280 + 102295), somma i saldi.
+// - Se nessun match, saldo_signed = 0.
+// - saldo_signed convenzione:
+//     clienti: D → positivo (credito verso cliente), A → negativo
+//     fornitori: A → positivo (debito verso fornitore), D → negativo (anticipo)
+function _saldoInizialeLookup(nome, ruolo) {
+  const isFor = ruolo === 'fornitori';
+  const index = isFor ? _saldiIndexFor : _saldiIndexCli;
+  const norm = _normNome(nome);
+  if (!norm) return { saldo_signed: 0, entries: [], match_type: 'none', nome_norm: '' };
+
+  // 1) match esatto
+  let entries = index.get(norm) || [];
+  let matchType = entries.length ? 'exact' : 'none';
+
+  // 2) match parziale "token-safe":
+  //    - Prima parola coincide esattamente ed è ≥4 char
+  //    - AND almeno una di:
+  //        a) entrambi i lati hanno una sola parola (l'esatto l'avrebbe già trovato,
+  //           quindi qui si triggera solo se i restanti char vengono mangiati da
+  //           _normNome: di fatto caso raro, lasciato per sicurezza)
+  //        b) anche la seconda parola coincide token-to-token
+  //
+  //    NON accettiamo più match asimmetrici (1 parola vs 2+ parole):
+  //    era la sorgente del falso positivo "CATALDO DURANTE" (persona) ↔ "DURANTE" (società).
+  //    Se un'anagrafica Danea è persona fisica con un cognome che è anche
+  //    ragione sociale, il saldo iniziale del PDF NON le verrà attribuito.
+  if (!entries.length) {
+    const toks = norm.split(' ').filter(Boolean);
+    const prima = toks[0];
+    if (prima && prima.length >= 4) {
+      for (const [k, v] of index.entries()) {
+        const kToks = k.split(' ').filter(Boolean);
+        if (kToks[0] !== prima) continue;          // la prima parola DEVE combaciare
+        const okSingola = toks.length === 1 && kToks.length === 1;
+        const okDoppia  = toks.length >= 2 && kToks.length >= 2 && toks[1] === kToks[1];
+        if (okSingola || okDoppia) {
+          entries = entries.concat(v);
+          matchType = 'partial';
+        }
+      }
+    }
+  }
+
+  // Calcola saldo signed (conventione: positivo = dovuto alla società, negativo = anticipo/anomalia)
+  let saldoSigned = 0;
+  entries.forEach(e => {
+    if (isFor) {
+      // fornitori: A = dovuto a fornitore (positivo), D = anticipo (negativo)
+      saldoSigned += (e.da === 'A' ? 1 : -1) * Number(e.saldo || 0);
+    } else {
+      // clienti: D = credito verso cliente (positivo), A = nota credito / anticipo (negativo)
+      saldoSigned += (e.da === 'D' ? 1 : -1) * Number(e.saldo || 0);
+    }
+  });
+
+  return {
+    saldo_signed: saldoSigned,
+    entries,
+    match_type: entries.length ? matchType : 'none',
+    nome_norm: norm
+  };
+}
+
+// Espone il meta per il frontend (data riferimento, totali, ecc.)
+function _saldiInizialiMeta() {
+  return {
+    ..._saldiIniziali._meta,
+    totali: _saldiIniziali.totali || null,
+    n_clienti: (_saldiIniziali.clienti || []).length,
+    n_fornitori: (_saldiIniziali.fornitori || []).length
+  };
+}
+
+// Funzione riutilizzabile: restituisce lista anagrafiche Danea con saldo calcolato.
+// NUOVO APPROCCIO (da 2026/1):
+//   - Saldo iniziale = da PDF bilancio 31/12/2025 (file saldi_iniziali_2026.json)
+//   - Movimenti = solo TDocTestate/TPrimaNota >= DANEA_CUTOFF (01/01/2026)
+//   - Nessuna importazione di dati Danea pre-cutoff.
+// Il parametro `fromIso` è ignorato (viene forzato a DANEA_CUTOFF); resta nella
+// signature solo per retro-compatibilità con i caller legacy.
+async function _getDaneaAnagraficheConSaldo(tipoReq, fromIso, alIso, soloConMov) {
+  const cutoff = DANEA_CUTOFF;
+  const alFilterDoc = alIso ? `AND d."DataDoc" <= '${alIso}'` : '';
+  const alFilterPag = alIso ? `AND p."DataPagam" <= '${alIso}'` : '';
+
+  const filtroAnagr = tipoReq === 'fornitori' ? `a."Fornitore" = 1`
+                    : tipoReq === 'tutti'      ? `(a."Cliente" = 1 OR a."Fornitore" = 1)`
+                                                : `a."Cliente" = 1`;
+
+  const tipiDocSet = tipoReq === 'fornitori' ? DANEA_TIPODOC_FORNITORI
+                   : tipoReq === 'tutti'      ? Array.from(new Set([...DANEA_TIPODOC_CLIENTI, ...DANEA_TIPODOC_FORNITORI]))
+                                              : DANEA_TIPODOC_CLIENTI;
+  const tipiDocIn = tipiDocSet.map(t => `'${t}'`).join(',');
+
+  // Solo movimenti >= cutoff: il saldo iniziale viene dal PDF (lookup sotto).
+  const docRows = await query(`
+    SELECT a."IDAnagr" AS idanagr,
+           a."CodAnagr" AS codanagr,
+           a."Nome" AS nome,
+           a."CodiceFiscale" AS codicefiscale,
+           a."PartitaIva" AS partitaiva,
+           a."Cliente" AS cliente, a."Fornitore" AS fornitore,
+           SUM(CASE WHEN d."TotDoc" > 0 THEN d."TotDoc" ELSE 0 END) AS post_pos,
+           SUM(CASE WHEN d."TotDoc" < 0 THEN -d."TotDoc" ELSE 0 END) AS post_neg,
+           COUNT(d."IDDoc") AS n_doc_post
+    FROM "TAnagrafica" a
+    LEFT JOIN "TDocTestate" d
+           ON d."IDAnagr" = a."IDAnagr"
+          AND d."TipoDoc" IN (${tipiDocIn})
+          AND d."DataDoc" >= '${cutoff}'
+          ${alFilterDoc}
+    WHERE ${filtroAnagr}
+    GROUP BY a."IDAnagr", a."CodAnagr", a."Nome", a."CodiceFiscale", a."PartitaIva", a."Cliente", a."Fornitore"
+  `);
+
+  // Pagamenti Danea >= cutoff. Includiamo anche gli acconti senza IDDoc (IDDoc=0/null).
+  // Escludiamo i giroconti.
+  const pagRows = await query(`
+    SELECT p."IDAnagr" AS idanagr,
+           SUM(p."Importo") AS post_tot,
+           COUNT(*) AS n_pag_post
+    FROM "TPrimaNota" p
+    LEFT JOIN "TDocTestate" d ON d."IDDoc" = p."IDDoc"
+    WHERE p."Saldato" = 1 AND p."DataPagam" IS NOT NULL
+      AND (p."IDGiroconto" IS NULL OR p."IDGiroconto" = 0)
+      AND p."DataPagam" >= '${cutoff}'
+      AND (d."TipoDoc" IN (${tipiDocIn}) OR p."IDDoc" IS NULL OR p."IDDoc" = 0)
+      ${alFilterPag}
+    GROUP BY p."IDAnagr"
+  `);
+  const pagMap = {};
+  pagRows.forEach(r => { pagMap[r.idanagr] = r; });
+
+  const items = docRows.map(r => {
+    const pag = pagMap[r.idanagr] || { post_tot: 0, n_pag_post: 0 };
+    const isFornitore = tipoReq === 'fornitori'
+                      || (tipoReq === 'tutti' && r.fornitore === 1);
+    let postDare, postAvere;
+    // Danea TPrimaNota sign convention (verificato aprile 2026):
+    //   clienti:   Importo > 0 = incasso (inflow)  → postAvere += post_tot
+    //   fornitori: Importo < 0 = pagamento (outflow) → postDare += (-post_tot)
+    // Quindi per fornitori neghiamo post_tot per ottenere il valore assoluto positivo.
+    if (isFornitore) {
+      postDare  = (r.post_neg || 0) - (pag.post_tot || 0);  // NC (pos) + |pagamenti| (neg→pos)
+      postAvere = (r.post_pos || 0);
+    } else {
+      postDare  = (r.post_pos || 0);
+      postAvere = (r.post_neg || 0) + (pag.post_tot || 0);  // NC (pos) + incassi (pos)
+    }
+    // Saldo periodo in convention contabile "dare - avere":
+    //   CLIENTI   → saldo positivo = credito aperto verso cliente (attivo)
+    //   FORNITORI → saldo negativo = debito aperto verso fornitore (passivo)
+    // Coerente con Merkaba / mastrini AGO.
+    const saldoPeriodo = postDare - postAvere;
+    // Saldo iniziale da PDF ufficiale (lookup per nome + ruolo)
+    const ruolo = isFornitore ? 'fornitori' : 'clienti';
+    const lookup = _saldoInizialeLookup(r.nome, ruolo);
+    const saldoIniziale = lookup.saldo_signed;
+    // Il lookup usa convention "positivo=debito" per fornitori (da PDF AGO).
+    // Per sommarlo al saldoPeriodo (convention dare-avere) serve invertirlo sui fornitori:
+    // fornitore con debito 5.000 → saldoIniziale=+5.000 → saldoIniz_DA = -5.000 (avere lato passivo).
+    const saldoInizialeDA = isFornitore ? -saldoIniziale : saldoIniziale;
+    return {
+      idanagr: r.idanagr,
+      codanagr: (r.codanagr || '').trim(),
+      nome: (r.nome || '').trim(),
+      cf: (r.codicefiscale || '').trim(),
+      piva: (r.partitaiva || '').trim(),
+      cliente: r.cliente === 1,
+      fornitore: r.fornitore === 1,
+      saldo_iniziale: saldoIniziale,
+      saldo_iniziale_match: lookup.match_type,   // 'exact'|'partial'|'none'
+      saldo_iniziale_sottoconti: lookup.entries.map(e => e.sottoconto), // es. ['102280 000']
+      dare: postDare,
+      avere: postAvere,
+      saldo: saldoInizialeDA + saldoPeriodo,    // convention dare-avere (fornitore: negativo=debito)
+      n_doc: r.n_doc_post || 0,
+      n_pag: pag.n_pag_post || 0
+    };
+  });
+
+  let filtered = items;
+  if (soloConMov) filtered = filtered.filter(x => x.n_doc > 0 || x.n_pag > 0 || Math.abs(x.saldo_iniziale) > 0.01);
+  filtered.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+
+  const totali = filtered.reduce((acc, x) => {
+    acc.saldo_iniziale += x.saldo_iniziale;
+    acc.dare += x.dare;
+    acc.avere += x.avere;
+    acc.saldo += x.saldo;
+    return acc;
+  }, { saldo_iniziale:0, dare:0, avere:0, saldo:0 });
+
+  return { items: filtered, totali };
+}
+
+// GET /api/saldi-iniziali — ritorna i saldi iniziali ufficiali (PDF bilancio).
+// Include _meta + lista completa clienti/fornitori e totali.
+app.get('/api/saldi-iniziali', (req, res) => {
+  try {
+    res.json({
+      _meta: _saldiInizialiMeta(),
+      cutoff: DANEA_CUTOFF,
+      clienti:   _saldiIniziali.clienti || [],
+      fornitori: _saldiIniziali.fornitori || []
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/saldi-iniziali/reload — ricarica il JSON da disco (utile se editato a caldo)
+app.post('/api/saldi-iniziali/reload', (req, res) => {
+  try {
+    _saldiInizialiLoad();
+    res.json({ ok: true, meta: _saldiInizialiMeta() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/partitari-danea/anagrafiche?tipo=clienti|fornitori|tutti&solo_con_movim=1&al=YYYY-MM-DD
+// NUOVO: saldo iniziale sempre dal PDF bilancio (01/01/2026). Movimenti solo >= cutoff.
+// Il parametro `from` è ormai ignorato.
+app.get('/api/partitari-danea/anagrafiche', async (req, res) => {
+  try {
+    const tipoReq    = (req.query.tipo || 'clienti').toLowerCase();
+    const soloConMov = req.query.solo_con_movim !== '0';
+    const alIso      = _isoAl(req.query.al);
+    const fromIso    = _isoFrom(req.query.from, alIso);
+    const { items, totali } = await _getDaneaAnagraficheConSaldo(tipoReq, fromIso, alIso, soloConMov);
+    res.json({ tipo: tipoReq, from: fromIso, al: alIso, items, totali });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── QUADRATURA PARTITARI: confronta Danea ↔ Merkaba ─────────────────────────
+// Normalizzazione nome: rimuove forme societarie, punteggiatura, spazi multipli
+function _qpNormNome(s) {
+  let x = (s || '').toString().toUpperCase();
+  x = x.replace(/[.\,\-_'&()\/\\]+/g, ' ');
+  x = x.replace(/\b(SRL|SRLS|SPA|SAS|SNC|S\s*R\s*L|S\s*P\s*A|DITTA\s+INDIVIDUALE|SOCIETA|SOC|COOP|COOPERATIVA|S\s*COOP)\b/g, '');
+  x = x.replace(/\s+/g, ' ').trim();
+  return x;
+}
+// Normalizzazione P.IVA: estrae solo cifre e restituisce le ultime 8
+// (ignora prefisso nazione "IT", spazi, trattini, zeri/caratteri extra).
+// Sotto le 8 cifre torna l'intero (per partite IVA esterne UE troncate).
+function _qpNormPiva(s) {
+  const d = ((s || '').toString()).replace(/\D/g, '');
+  if (!d) return '';
+  return d.length >= 8 ? d.slice(-8) : d;
+}
+// Normalizzazione CF: toUpperCase + rimuove spazi/trattini.
+function _qpNormCf(s) {
+  return ((s || '').toString()).toUpperCase().replace(/[\s\-]/g, '');
+}
+
+// GET /api/quadratura-partitari?snapshot=YYYYMMDD&tipo=clienti|fornitori&sottoconto=<code>&al=YYYY-MM-DD&tolleranza=0.01
+app.get('/api/quadratura-partitari', async (req, res) => {
+  try {
+    const snapshot   = (req.query.snapshot || '').trim();
+    const tipoReq    = (req.query.tipo || 'clienti').toLowerCase();
+    const sottoSel   = (req.query.sottoconto || '').trim();        // codice sottoconto Merkaba (es. '102280 000')
+    const alIso      = _isoAl(req.query.al);
+    const tolleranza = Math.max(0, parseFloat(req.query.tolleranza) || 0.01);
+    // fromIso = apertura esercizio di `al` (YYYY-01-01). Non più configurabile.
+    const fromIso    = _isoFrom(req.query.from, alIso);
+
+    if (!snapshot || !/^\d{8}$/.test(snapshot)) return res.status(400).json({ error: 'snapshot (YYYYMMDD) richiesto' });
+    if (tipoReq !== 'clienti' && tipoReq !== 'fornitori') return res.status(400).json({ error: 'tipo: clienti o fornitori' });
+
+    // 1) Merkaba: carica snapshot + aggrega cli_for dai sottoconti selezionati
+    let merkabaData;
+    try { merkabaData = _partitariLoad(snapshot); }
+    catch(e) { return res.status(404).json({ error: 'Snapshot Merkaba non trovato: ' + snapshot }); }
+
+    // Euristica: un sottoconto è "clienti" se desc contiene "client" e NON "fornit";
+    //           è "fornitori" se desc contiene "fornit".
+    // Sottoconti ambigui (es. "Banca c/effetti", "cessioni crediti") vengono esclusi a meno che
+    // l'utente specifichi il sottoconto manualmente.
+    const _scMatchTipo = (sc, tipo) => {
+      const d = (sc.descrizione || '').toLowerCase();
+      const hasCli = /client/.test(d);
+      const hasFor = /fornit/.test(d);
+      if (tipo === 'clienti')   return hasCli && !hasFor;
+      if (tipo === 'fornitori') return hasFor;
+      return false;
+    };
+
+    // Raccogli cli_for: se sottoconto specifico → solo quello; altrimenti tutti i sottoconti
+    // has_cli_for FILTRATI per tipo (clienti vs fornitori)
+    const merkabaList = [];
+    const sottocontiInclusi = [];
+    Object.values(merkabaData.sottoconti || {}).forEach(sc => {
+      if (!sc.has_cli_for) return;
+      if (sottoSel) {
+        if (sc.codice !== sottoSel) return;    // scelta manuale: rispetta
+      } else {
+        if (!_scMatchTipo(sc, tipoReq)) return; // auto: filtra per tipo
+      }
+      sottocontiInclusi.push({ codice: sc.codice, descrizione: sc.descrizione });
+      Object.values(sc.cli_for || {}).forEach(c => {
+        const saldo = (c.totali && c.totali.saldo_finale) || 0;
+        merkabaList.push({
+          sottoconto:     sc.codice,
+          sottoconto_desc: sc.descrizione,
+          codice:         c.codice,
+          nome:           c.descrizione || '',
+          cf:             c.cf || '',
+          piva:           c.piva || '',
+          saldo:          saldo
+        });
+      });
+    });
+
+    // 2) Danea: chiama il saldo (solo_con_movim=false per avere TUTTO e match completo)
+    const { items: daneaItems } = await _getDaneaAnagraficheConSaldo(tipoReq, fromIso, alIso, false);
+
+    // 3) Build lookup maps per Merkaba (per CF, PIVA e nome normalizzato)
+    // CF: uppercase + no spazi/trattini
+    // PIVA: ultime 8 cifre (tollera prefisso IT, spazi, punteggiatura)
+    const mByCf = {}, mByPiva = {}, mByNome = {};
+    merkabaList.forEach(m => {
+      const cfK = _qpNormCf(m.cf);
+      if (cfK) (mByCf[cfK] = mByCf[cfK] || []).push(m);
+      const pK = _qpNormPiva(m.piva);
+      if (pK) (mByPiva[pK] = mByPiva[pK] || []).push(m);
+      const nk = _qpNormNome(m.nome);
+      if (nk) (mByNome[nk] = mByNome[nk] || []).push(m);
+    });
+
+    const usatiMerk = new Set(); // merkaba index già accoppiati
+    const righe = [];
+
+    // 3a) Match Danea → Merkaba
+    daneaItems.forEach(d => {
+      const saldoD = +(d.saldo || 0);
+      let match = null, matchBy = null;
+
+      const cfKey   = _qpNormCf(d.cf);
+      const pivaKey = _qpNormPiva(d.piva);
+      const nkey    = _qpNormNome(d.nome);
+
+      if (cfKey && mByCf[cfKey]) {
+        match = mByCf[cfKey].find(m => !usatiMerk.has(m)); if (match) matchBy = 'cf';
+      }
+      if (!match && pivaKey && mByPiva[pivaKey]) {
+        match = mByPiva[pivaKey].find(m => !usatiMerk.has(m)); if (match) matchBy = 'piva';
+      }
+      if (!match && nkey && mByNome[nkey]) {
+        match = mByNome[nkey].find(m => !usatiMerk.has(m)); if (match) matchBy = 'nome';
+      }
+
+      if (match) {
+        usatiMerk.add(match);
+        const saldoM = +(match.saldo || 0);
+        const diff   = saldoD - saldoM;
+        const stato  = Math.abs(diff) <= tolleranza ? 'ok' : 'discrepanza';
+        righe.push({
+          nome:             d.nome,
+          nome_merkaba:     match.nome,
+          cf:               d.cf || match.cf,
+          piva:             d.piva || match.piva,
+          codanagr_danea:   d.codanagr,
+          idanagr_danea:    d.idanagr,
+          codice_merkaba:   match.codice,
+          sottoconto:       match.sottoconto,
+          sottoconto_desc:  match.sottoconto_desc,
+          saldo_danea:      saldoD,
+          saldo_merkaba:    saldoM,
+          diff:             diff,
+          // Scomposizione saldo Danea (per debug: saldo_iniziale pre-from + dare/avere nel periodo)
+          d_saldo_iniziale: +(d.saldo_iniziale || 0),
+          d_dare:           +(d.dare || 0),
+          d_avere:          +(d.avere || 0),
+          d_n_doc:          d.n_doc || 0,
+          d_n_pag:          d.n_pag || 0,
+          stato:            stato,
+          match_by:         matchBy,
+          solo_danea:       false,
+          solo_merkaba:     false
+        });
+      } else if (Math.abs(saldoD) > tolleranza) {
+        // Solo in Danea (con saldo significativo)
+        righe.push({
+          nome:          d.nome,
+          cf:            d.cf,
+          piva:          d.piva,
+          codanagr_danea: d.codanagr,
+          idanagr_danea: d.idanagr,
+          saldo_danea:   saldoD,
+          saldo_merkaba: null,
+          diff:          saldoD,
+          d_saldo_iniziale: +(d.saldo_iniziale || 0),
+          d_dare:        +(d.dare || 0),
+          d_avere:       +(d.avere || 0),
+          d_n_doc:       d.n_doc || 0,
+          d_n_pag:       d.n_pag || 0,
+          stato:         'solo_danea',
+          match_by:      null,
+          solo_danea:    true,
+          solo_merkaba:  false
+        });
+      }
+      // Se saldoD == 0 e non c'è match, lo saltiamo: non è interessante
+    });
+
+    // 3b) Merkaba rimanenti (non matchati) con saldo significativo → "solo_merkaba"
+    merkabaList.forEach(m => {
+      if (usatiMerk.has(m)) return;
+      const saldoM = +(m.saldo || 0);
+      if (Math.abs(saldoM) <= tolleranza) return;
+      righe.push({
+        nome:            m.nome,
+        cf:              m.cf,
+        piva:            m.piva,
+        codice_merkaba:  m.codice,
+        sottoconto:      m.sottoconto,
+        sottoconto_desc: m.sottoconto_desc,
+        saldo_danea:     null,
+        saldo_merkaba:   saldoM,
+        diff:            -saldoM,
+        stato:           'solo_merkaba',
+        match_by:        null,
+        solo_danea:      false,
+        solo_merkaba:    true
+      });
+    });
+
+    // Ordina alfabeticamente per nome (it-IT, case/accent-insensitive).
+    // Se il nome è vuoto cade su nome_merkaba.
+    righe.sort((a,b) => {
+      const na = (a.nome || a.nome_merkaba || '').trim();
+      const nb = (b.nome || b.nome_merkaba || '').trim();
+      return na.localeCompare(nb, 'it-IT', { sensitivity: 'base' });
+    });
+
+    const sommario = {
+      totale:         righe.length,
+      ok:             righe.filter(r => r.stato === 'ok').length,
+      discrepanza:    righe.filter(r => r.stato === 'discrepanza').length,
+      solo_danea:     righe.filter(r => r.stato === 'solo_danea').length,
+      solo_merkaba:   righe.filter(r => r.stato === 'solo_merkaba').length,
+      tot_saldo_danea:   righe.reduce((s,r) => s + (r.saldo_danea   || 0), 0),
+      tot_saldo_merkaba: righe.reduce((s,r) => s + (r.saldo_merkaba || 0), 0),
+      tot_diff:          righe.reduce((s,r) => s + (r.diff          || 0), 0)
+    };
+
+    // Elenco sottoconti Merkaba disponibili (per UI: permette scelta).
+    // Tagghiamo ciascuno con il tipo inferito dalla descrizione (clienti / fornitori / altro).
+    const sottoFlags = Object.values(merkabaData.sottoconti || {})
+      .filter(sc => sc.has_cli_for)
+      .map(sc => {
+        const d = (sc.descrizione || '').toLowerCase();
+        const hasCli = /client/.test(d);
+        const hasFor = /fornit/.test(d);
+        const tipoAuto = hasCli && !hasFor ? 'clienti' : (hasFor ? 'fornitori' : 'altro');
+        return {
+          codice: sc.codice, descrizione: sc.descrizione,
+          n_cli_for: Object.keys(sc.cli_for||{}).length,
+          tipo_auto: tipoAuto
+        };
+      });
+
+    res.json({
+      snapshot, tipo: tipoReq, al: alIso, from: fromIso, tolleranza,
+      sottoconti_disponibili: sottoFlags,
+      sottoconti_inclusi:     sottocontiInclusi,
+      righe, sommario
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// GET /api/partitari-danea/:idAnagr?al=YYYY-MM-DD&ruolo=clienti|fornitori&tipodoc_all=1
+// NUOVO: il saldo iniziale è SEMPRE al DANEA_CUTOFF (01/01/2026), letto dal PDF
+// ufficiale di bilancio. Non importiamo nessun dato Danea pre-cutoff.
+// `ruolo` override per anagrafiche dual-role. Default: Cliente=1 → clienti.
+// `tipodoc_all=1` bypassa il filtro TipoDoc (utile finché non conosciamo i codici
+// acquisto reali di questa installazione Easyfatt — vedi /api/debug/fornitori-tipodoc).
+app.get('/api/partitari-danea/:idAnagr', async (req, res) => {
+  try {
+    const id = parseInt(req.params.idAnagr, 10);
+    if (!id) return res.status(400).json({ error: 'idAnagr non valido' });
+    const alIso   = _isoAl(req.query.al);
+    const fromIso = DANEA_CUTOFF;                          // cutoff fisso
+    const ruoloReq = (req.query.ruolo || '').toLowerCase();
+    const tipoDocAll = req.query.tipodoc_all === '1' || req.query.tipodoc_all === 'true';
+    const alDoc   = alIso ? `AND "DataDoc" <= '${alIso}'` : '';
+    const alDocP  = alIso ? `AND p."DataPagam" <= '${alIso}'` : ''; // alias p. nella query pags
+
+    // Anagrafica
+    const anaRows = await query(`SELECT * FROM "TAnagrafica" WHERE "IDAnagr" = ${id}`);
+    if (!anaRows.length) return res.status(404).json({ error: 'Anagrafica non trovata' });
+    const a = anaRows[0];
+    // Ruolo: override esplicito > Cliente=1 > Fornitore=1
+    const isFornitore = ruoloReq === 'fornitori' ? true
+                      : ruoloReq === 'clienti'   ? false
+                      : (a.cliente === 1 ? false : a.fornitore === 1);
+    const tipiDoc = isFornitore ? DANEA_TIPODOC_FORNITORI : DANEA_TIPODOC_CLIENTI;
+    const tipiDocIn = tipiDoc.map(t => `'${t}'`).join(',');
+    // Filtro SQL: se tipodoc_all → nessun filtro, altrimenti IN (...)
+    const tipoDocFiltroDoc = tipoDocAll ? '' : `AND "TipoDoc" IN (${tipiDocIn})`;
+    const tipoDocFiltroPag = tipoDocAll
+      ? ''
+      : `AND (d."TipoDoc" IN (${tipiDocIn}) OR p."IDDoc" IS NULL OR p."IDDoc" = 0)`;
+
+    // ──── Saldo iniziale dal PDF ufficiale (saldi_iniziali_2026.json) ────
+    const ruolo     = isFornitore ? 'fornitori' : 'clienti';
+    const siLookup  = _saldoInizialeLookup(a.nome, ruolo);
+    const saldoIniziale = siLookup.saldo_signed;
+
+    // ──── Documenti >= cutoff (01/01/2026) fino ad alIso ────
+    const docs = await query(`
+      SELECT "IDDoc" AS iddoc, "TipoDoc" AS tipodoc, "DataDoc" AS datadoc,
+             "NumDoc" AS numdoc, "DescDoc" AS descdoc,
+             "TotDoc" AS totdoc, "NomeReport" AS nomereport,
+             "Pagam_Saldato" AS saldato,
+             "Pagam_ImportoSaldato" AS pag_saldato,
+             "Pagam_ImportoDaSaldare" AS pag_da_saldare
+      FROM "TDocTestate"
+      WHERE "IDAnagr" = ${id}
+        ${tipoDocFiltroDoc}
+        AND "DataDoc" >= '${fromIso}'
+        ${alDoc}
+      ORDER BY "DataDoc"
+    `);
+
+    // ──── Pagamenti saldati >= cutoff fino ad alIso (escludo giroconti) ────
+    const pags = await query(`
+      SELECT p."IDPrimaNota" AS idprimanota, p."IDDoc" AS iddoc,
+             p."DataPagam" AS datapagam, p."DataScad" AS datascad,
+             p."Importo" AS importo, p."Risorsa" AS risorsa,
+             p."CategPagamento" AS categpagamento,
+             p."RifPagam" AS rifpagam, p."NomePagamDoc" AS nomepagamdoc,
+             p."IsAcconto" AS isacconto,
+             d."NumDoc" AS doc_numdoc, d."TipoDoc" AS doc_tipodoc
+      FROM "TPrimaNota" p
+      LEFT JOIN "TDocTestate" d ON d."IDDoc" = p."IDDoc"
+      WHERE p."IDAnagr" = ${id}
+        AND p."Saldato" = 1 AND p."DataPagam" IS NOT NULL
+        AND (p."IDGiroconto" IS NULL OR p."IDGiroconto" = 0)
+        AND p."DataPagam" >= '${fromIso}'
+        ${tipoDocFiltroPag}
+        ${alDocP}
+      ORDER BY p."DataPagam"
+    `);
+
+    // ──── Costruisci righe partitario ────
+    const righe = [];
+
+    // Riga "Saldo iniziale al 01/01/2026" (da PDF) — sempre inserita se diversa da 0
+    // Convention contabile:
+    //   CLIENTI (attivo): credito (D=+)→ DARE, NC/anticipo (A=-) → AVERE
+    //   FORNITORI (passivo): debito (A=+) → AVERE, anticipo (D=-) → DARE
+    if (Math.abs(saldoIniziale) > 0.005) {
+      let dareSI, avereSI;
+      if (isFornitore) {
+        dareSI  = saldoIniziale < 0 ? -saldoIniziale : 0;
+        avereSI = saldoIniziale > 0 ?  saldoIniziale : 0;
+      } else {
+        dareSI  = saldoIniziale > 0 ?  saldoIniziale : 0;
+        avereSI = saldoIniziale < 0 ? -saldoIniziale : 0;
+      }
+      const sottocontiNote = (siLookup.entries || [])
+        .map(e => `${e.sottoconto} ${e.sottoconto_desc} (€ ${Number(e.saldo).toLocaleString('it-IT', {minimumFractionDigits:2, maximumFractionDigits:2})} ${e.da})`)
+        .join(' + ');
+      righe.push({
+        tipo: 'saldo_iniziale',
+        data: '2025-12-31',
+        doc: 'Saldo al 31/12/2025',
+        descrizione: `Saldo iniziale ufficiale da bilancio AEC (PDF 31/12/2025) · ${sottocontiNote || 'nessun sottoconto'}`,
+        dare: dareSI,
+        avere: avereSI,
+        _ord: 0
+      });
+    }
+
+    docs.forEach(d => {
+      const totdoc = d.totdoc || 0;
+      const isNeg = totdoc < 0;
+      let dare = 0, avere = 0;
+      if (isFornitore) {
+        if (isNeg) dare = -totdoc; else avere = totdoc;
+      } else {
+        if (isNeg) avere = -totdoc; else dare = totdoc;
+      }
+      const descr = (d.descdoc || d.nomereport || '').toString().trim() || 'Documento';
+      righe.push({
+        tipo: 'documento',
+        data: d.datadoc,
+        doc: `${d.tipodoc}·${d.numdoc || d.iddoc}`,
+        descrizione: descr,
+        dare, avere,
+        _ord: 1,
+        _iddoc: d.iddoc,
+        _tipodoc: d.tipodoc
+      });
+    });
+
+    pags.forEach(p => {
+      const importo = p.importo || 0;
+      let dare = 0, avere = 0;
+      // In Danea TPrimaNota: pagamenti a fornitore hanno Importo NEGATIVO (outflow),
+      // incassi da cliente hanno Importo POSITIVO (inflow).
+      // Per dare/avere usiamo il valore assoluto nel verso corretto:
+      //   fornitore: pagamento (importo<0) → DARE (riduce debito)
+      //              rimborso  (importo>0) → AVERE (aumenta debito, raro)
+      //   cliente:   incasso   (importo>0) → AVERE (riduce credito)
+      //              rimborso  (importo<0) → DARE  (aumenta credito, raro)
+      if (isFornitore) {
+        if (importo <= 0) dare  = -importo;  // pagamento → DARE (+)
+        else              avere =  importo;  // rimborso raro → AVERE
+      } else {
+        if (importo >= 0) avere =  importo;  // incasso → AVERE (+)
+        else              dare  = -importo;  // rimborso raro → DARE
+      }
+      const parts = [];
+      if (p.categpagamento) parts.push(p.categpagamento.trim());
+      if (p.risorsa) parts.push(p.risorsa.trim());
+      if (p.rifpagam) parts.push(p.rifpagam.trim());
+      let descr = parts.filter(Boolean).join(' · ');
+      if (p.doc_numdoc) descr += ` (rif ${p.doc_tipodoc}·${p.doc_numdoc})`;
+      const rataInfo = p.nomepagamdoc ? ` [${p.nomepagamdoc.trim()}]` : '';
+      righe.push({
+        tipo: 'pagamento',
+        data: p.datapagam,
+        doc: (p.rifpagam || 'Pagam.').trim() + rataInfo,
+        descrizione: descr || 'Pagamento',
+        dare, avere,
+        _ord: 2,
+        _idprimanota: p.idprimanota,
+        _iddoc_rif: p.iddoc
+      });
+    });
+
+    righe.sort((a, b) => {
+      const da = new Date(a.data).getTime();
+      const db = new Date(b.data).getTime();
+      if (da !== db) return da - db;
+      return a._ord - b._ord;
+    });
+
+    // Saldo progressivo: convention contabile dare-avere (Merkaba / mastrino AGO).
+    //   CLIENTI   (attivo):  saldo positivo = credito aperto verso cliente
+    //   FORNITORI (passivo): saldo negativo = debito aperto verso fornitore
+    let saldo = 0, totDare = 0, totAvere = 0;
+    righe.forEach(r => {
+      totDare += r.dare;
+      totAvere += r.avere;
+      saldo += r.dare - r.avere;
+      r.saldo = saldo;
+      delete r._ord;
+    });
+
+    // Anticipi imputati (matching per soggetto). Il JSON da guardare dipende dal ruolo:
+    //  - ruolo clienti   → anticipi_clienti.json   (campo "cliente")
+    //  - ruolo fornitori → anticipi_fornitori.json (campo "fornitore")
+    let anticipiImputati = [];
+    try {
+      const tipoAnti = isFornitore ? 'fornitori' : 'clienti';
+      const soggKey  = ANTICIPI_SOGG_KEY[tipoAnti];          // 'cliente' | 'fornitore'
+      const antiData = _anticipiLoad(tipoAnti);
+      const nome = (a.nome || '').toUpperCase();
+      const codanagr = (a.codanagr || '').toUpperCase().trim();
+      const primaParola = nome.split(/\s+/)[0] || '';
+      anticipiImputati = antiData.anticipi.filter(an => {
+        if (!an.spostato) return false;
+        const target  = (an.cli_for_target || '').toUpperCase();
+        const soggOrig = (an[soggKey] || an.cliente || an.fornitore || '').toUpperCase();
+        // Match se:
+        //  - target contiene codanagr Danea
+        //  - target/soggetto_originale contiene il nome o prima parola
+        //  - nome anagrafica Danea contiene il soggetto dell'anticipo originale
+        if (codanagr && target.includes(codanagr)) return true;
+        if (primaParola.length >= 3 && (target.includes(primaParola) || soggOrig.includes(primaParola))) return true;
+        if (nome.includes(soggOrig) || (soggOrig && soggOrig.length >= 3 && nome.includes(soggOrig))) return true;
+        return false;
+      });
+    } catch {}
+
+    const totImputati = anticipiImputati.reduce((s, x) => s + (x.importo || 0), 0);
+
+    res.json({
+      anagrafica: {
+        idanagr: id,
+        codanagr: (a.codanagr || '').trim(),
+        nome: (a.nome || '').trim(),
+        cliente: a.cliente === 1,
+        fornitore: a.fornitore === 1,
+        citta: a.citta, nazione: a.nazione,
+        partitaiva: a.partitaiva, codicefiscale: a.codicefiscale
+      },
+      from: fromIso,
+      al: alIso,
+      ruolo_usato: isFornitore ? 'fornitori' : 'clienti',
+      ruolo_richiesto: ruoloReq || '(auto)',
+      tipodoc_filtro: tipoDocAll ? '(tutti — bypass)' : tipiDoc.join(','),
+      // saldo_iniziale: convention PDF AGO (positivo=credito per clienti / debito per fornitori).
+      // saldo_iniziale_dare_avere: convention contabile dare-avere (positivo=credito cliente, negativo=debito fornitore).
+      saldo_iniziale: saldoIniziale,
+      saldo_iniziale_dare_avere: isFornitore ? -saldoIniziale : saldoIniziale,
+      saldo_iniziale_source: {
+        fonte: 'PDF bilancio 31/12/2025 (saldi_iniziali_2026.json)',
+        meta: _saldiInizialiMeta(),
+        match_type: siLookup.match_type,           // 'exact' | 'partial' | 'none'
+        nome_normalizzato: siLookup.nome_norm,
+        entries: siLookup.entries                  // [{ nome, sottoconto, sottoconto_desc, saldo, da }, ...]
+      },
+      totali: {
+        saldo_iniziale: saldoIniziale,             // convention PDF
+        dare: totDare,
+        avere: totAvere,
+        saldo: totDare - totAvere,                 // convention dare-avere (fornitore: neg=debito)
+        anticipi_imputati: totImputati
+      },
+      righe,
+      anticipi_imputati: anticipiImputati
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── DANEA DEBUG per singola anagrafica (per capire divergenze Merkaba) ─────
+// ═════════════════════════════════════════════════════════════════════════════
+// Accetta id=<idanagr> oppure q=<parte_nome> oppure codanagr=<codice>
+// GET /api/danea-debug/anagrafica?q=Abbott&from=2025-01-01
+app.get('/api/danea-debug/anagrafica', async (req, res) => {
+  try {
+    const fromIso = _isoFrom(req.query.from);
+    let where = null;
+    if (req.query.id) {
+      where = `"IDAnagr" = ${parseInt(req.query.id, 10) || 0}`;
+    } else if (req.query.codanagr) {
+      const c = String(req.query.codanagr).replace(/'/g, "''");
+      where = `UPPER("CodAnagr") = UPPER('${c}')`;
+    } else if (req.query.q) {
+      const q = String(req.query.q).replace(/'/g, "''").toUpperCase();
+      where = `UPPER("Nome") LIKE '%${q}%'`;
+    } else {
+      return res.status(400).json({ error: 'fornire id, codanagr o q' });
+    }
+
+    const anagrafiche = await query(`SELECT * FROM "TAnagrafica" WHERE ${where}`);
+    if (!anagrafiche.length) return res.json({ from: fromIso, anagrafiche: [], hint: 'nessuna anagrafica trovata' });
+
+    const out = [];
+    for (const a of anagrafiche) {
+      const id = a.idanagr;
+
+      // A) Tutti i documenti di questa anagrafica, split per TipoDoc + segno TotDoc + pre/post cutoff
+      const docsBreak = await query(`
+        SELECT "TipoDoc" AS tipodoc,
+               CASE WHEN "DataDoc" < '${fromIso}' THEN 'pre' ELSE 'post' END AS periodo,
+               CASE WHEN "TotDoc" > 0 THEN 'pos' WHEN "TotDoc" < 0 THEN 'neg' ELSE 'zero' END AS segno,
+               COUNT(*) AS n,
+               SUM("TotDoc") AS somma_totdoc,
+               MIN("DataDoc") AS min_data,
+               MAX("DataDoc") AS max_data
+        FROM "TDocTestate"
+        WHERE "IDAnagr" = ${id}
+        GROUP BY "TipoDoc",
+                 CASE WHEN "DataDoc" < '${fromIso}' THEN 'pre' ELSE 'post' END,
+                 CASE WHEN "TotDoc" > 0 THEN 'pos' WHEN "TotDoc" < 0 THEN 'neg' ELSE 'zero' END
+        ORDER BY "TipoDoc", 2, 3
+      `);
+
+      // B) Tutti i pagamenti di questa anagrafica
+      const pagsBreak = await query(`
+        SELECT CASE WHEN "DataPagam" IS NULL THEN 'null'
+                    WHEN "DataPagam" < '${fromIso}' THEN 'pre' ELSE 'post' END AS periodo,
+               "Saldato" AS saldato,
+               "IsAcconto" AS isacconto,
+               CASE WHEN "IDGiroconto" IS NULL OR "IDGiroconto" = 0 THEN 'no_gir' ELSE 'si_gir' END AS gir,
+               CASE WHEN "IDDoc" IS NULL OR "IDDoc" = 0 THEN 'no_doc' ELSE 'si_doc' END AS haveDoc,
+               COUNT(*) AS n,
+               SUM("Importo") AS somma_importo
+        FROM "TPrimaNota"
+        WHERE "IDAnagr" = ${id}
+        GROUP BY CASE WHEN "DataPagam" IS NULL THEN 'null'
+                      WHEN "DataPagam" < '${fromIso}' THEN 'pre' ELSE 'post' END,
+                 "Saldato", "IsAcconto",
+                 CASE WHEN "IDGiroconto" IS NULL OR "IDGiroconto" = 0 THEN 'no_gir' ELSE 'si_gir' END,
+                 CASE WHEN "IDDoc" IS NULL OR "IDDoc" = 0 THEN 'no_doc' ELSE 'si_doc' END
+        ORDER BY 1, 2, 3, 4, 5
+      `);
+
+      // C) Campioni di doc nel periodo post (primi 15)
+      const docsSample = await query(`
+        SELECT FIRST 15 "IDDoc" AS iddoc, "TipoDoc" AS tipodoc, "DataDoc" AS datadoc,
+               "NumDoc" AS numdoc, "TotDoc" AS totdoc,
+               "Pagam_Saldato" AS pagam_saldato,
+               "Pagam_ImportoSaldato" AS pag_saldato,
+               "Pagam_ImportoDaSaldare" AS pag_da_saldare
+        FROM "TDocTestate"
+        WHERE "IDAnagr" = ${id} AND "DataDoc" >= '${fromIso}'
+        ORDER BY "DataDoc"
+      `);
+
+      // D) Campioni di pag nel periodo post (primi 15)
+      const pagsSample = await query(`
+        SELECT FIRST 15 "IDPrimaNota" AS idprimanota, "IDDoc" AS iddoc,
+               "DataPagam" AS datapagam, "Importo" AS importo,
+               "Saldato" AS saldato, "IsAcconto" AS isacconto,
+               "IDGiroconto" AS idgiroconto,
+               "RifPagam" AS rifpagam
+        FROM "TPrimaNota"
+        WHERE "IDAnagr" = ${id} AND "DataPagam" >= '${fromIso}'
+        ORDER BY "DataPagam"
+      `);
+
+      // E) Ricalcolo "come fa la LISTA" (filtro F,N,I,E) vs "come fa il DETAIL" (F,N o I,E)
+      const isFornitore = a.fornitore === 1;
+      const tipiDetail = isFornitore ? DANEA_TIPODOC_FORNITORI : DANEA_TIPODOC_CLIENTI;
+      const tipiAll = ['F','N','I','E'];
+      const listaCalc = await query(`
+        SELECT SUM(CASE WHEN "TotDoc" > 0 AND "DataDoc" < '${fromIso}' THEN "TotDoc" ELSE 0 END) AS pre_pos,
+               SUM(CASE WHEN "TotDoc" < 0 AND "DataDoc" < '${fromIso}' THEN -"TotDoc" ELSE 0 END) AS pre_neg,
+               SUM(CASE WHEN "TotDoc" > 0 AND "DataDoc" >= '${fromIso}' THEN "TotDoc" ELSE 0 END) AS post_pos,
+               SUM(CASE WHEN "TotDoc" < 0 AND "DataDoc" >= '${fromIso}' THEN -"TotDoc" ELSE 0 END) AS post_neg
+        FROM "TDocTestate"
+        WHERE "IDAnagr" = ${id} AND "TipoDoc" IN (${tipiAll.map(t=>`'${t}'`).join(',')})
+      `);
+      const detailCalc = await query(`
+        SELECT SUM(CASE WHEN "TotDoc" > 0 AND "DataDoc" < '${fromIso}' THEN "TotDoc" ELSE 0 END) AS pre_pos,
+               SUM(CASE WHEN "TotDoc" < 0 AND "DataDoc" < '${fromIso}' THEN -"TotDoc" ELSE 0 END) AS pre_neg,
+               SUM(CASE WHEN "TotDoc" > 0 AND "DataDoc" >= '${fromIso}' THEN "TotDoc" ELSE 0 END) AS post_pos,
+               SUM(CASE WHEN "TotDoc" < 0 AND "DataDoc" >= '${fromIso}' THEN -"TotDoc" ELSE 0 END) AS post_neg
+        FROM "TDocTestate"
+        WHERE "IDAnagr" = ${id} AND "TipoDoc" IN (${tipiDetail.map(t=>`'${t}'`).join(',')})
+      `);
+
+      out.push({
+        idanagr: id,
+        codanagr: (a.codanagr || '').trim(),
+        nome: (a.nome || '').trim(),
+        cliente: a.cliente === 1,
+        fornitore: a.fornitore === 1,
+        from: fromIso,
+        docs_breakdown: docsBreak,
+        pags_breakdown: pagsBreak,
+        docs_sample_post: docsSample,
+        pags_sample_post: pagsSample,
+        calc_come_lista_F_N_I_E: listaCalc[0],
+        calc_come_detail: detailCalc[0],
+        tipi_doc_detail_usati: tipiDetail,
+        nota: isFornitore
+          ? 'Anagrafica trattata come FORNITORE (fornitore=1). TipoDoc usati in detail: I,E'
+          : 'Anagrafica trattata come CLIENTE. TipoDoc usati in detail: F,N'
+      });
+    }
+
+    res.json({ from: fromIso, trovate: out.length, anagrafiche: out });
+  } catch (e) {
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── DANEA EXPLORE (temporaneo: per capire struttura DB) ─────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+app.get('/api/danea-explore', async (req, res) => {
+  try {
+    // Q1: Tipi di documento
+    const q1 = await query(`
+      SELECT "TipoDoc", COUNT(*) AS n, MIN("DataDoc") AS dal, MAX("DataDoc") AS al
+      FROM "TDocTestate"
+      GROUP BY "TipoDoc"
+      ORDER BY COUNT(*) DESC
+    `);
+
+    // Q2: Esempio anagrafica AME (per capire le colonne)
+    const q2 = await query(`
+      SELECT FIRST 3 * FROM "TAnagrafica"
+      WHERE UPPER("Nome") LIKE '%AME ADVANCED%'
+    `);
+    const q2cols = q2.length ? Object.keys(q2[0]) : [];
+
+    // Q3: Pagamenti con/senza IDDoc
+    const q3 = await query(`
+      SELECT
+        CASE WHEN "IDDoc" IS NULL OR "IDDoc" = 0 THEN 'senza_doc' ELSE 'con_doc' END AS tipo,
+        COUNT(*) AS n,
+        SUM("Importo") AS tot
+      FROM "TPrimaNota"
+      GROUP BY 1
+    `);
+
+    // Q4 bonus: prime 2 righe TPrimaNota di AME (per vedere le colonne)
+    let q4 = [];
+    let q4cols = [];
+    if (q2.length) {
+      const idAnagrAme = q2[0].idanagr || q2[0].IDAnagr;
+      if (idAnagrAme) {
+        q4 = await query(`SELECT FIRST 2 * FROM "TPrimaNota" WHERE "IDAnagr" = ${parseInt(idAnagrAme,10)}`);
+        q4cols = q4.length ? Object.keys(q4[0]) : [];
+      }
+    }
+
+    // Q5 bonus: prime 2 righe TDocTestate di AME (per vedere le colonne)
+    let q5 = [];
+    let q5cols = [];
+    if (q2.length) {
+      const idAnagrAme = q2[0].idanagr || q2[0].IDAnagr;
+      if (idAnagrAme) {
+        q5 = await query(`SELECT FIRST 2 * FROM "TDocTestate" WHERE "IDAnagr" = ${parseInt(idAnagrAme,10)}`);
+        q5cols = q5.length ? Object.keys(q5[0]) : [];
+      }
+    }
+
+    res.json({
+      q1_tipi_doc: q1,
+      q2_anagrafica_ame: q2,
+      q2_colonne_tanagrafica: q2cols,
+      q3_pagam_con_senza_doc: q3,
+      q4_esempio_tprimanota_ame: q4,
+      q4_colonne_tprimanota: q4cols,
+      q5_esempio_tdoctestate_ame: q5,
+      q5_colonne_tdoctestate: q5cols
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── DIAGNOSTICA: TipoDoc reali per fornitori ────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════
+// Obiettivo: verificare che i codici TipoDoc Easyfatt per le FATTURE ACQUISTO
+// in DANEA_TIPODOC_FORNITORI siano coerenti col DB reale. Verificato aprile 2026:
+// sono 'U' (Fattura forn., 315 doc/€1,18M dal cutoff) e 'N' (NC raro).
+//
+// Uso tipico:
+//   curl http://172.17.2.100:8087/api/debug/fornitori-tipodoc
+//   curl http://172.17.2.100:8087/api/debug/fornitori-tipodoc?nome=ALLIS
+//
+// Q1 → distribuzione TipoDoc per TUTTE le anagrafiche Fornitore=1 (global)
+// Q2 → distribuzione TipoDoc per documenti >= 2026-01-01 su anagrafiche Fornitore=1
+// Q3 → se ?nome=xxx, dettaglio documenti di un fornitore specifico (>=2026-01-01)
+// Q4 → sample di 10 documenti "TipoDoc unusual" (fuori dalla costante attuale)
+// ═════════════════════════════════════════════════════════════════════════════
+app.get('/api/debug/fornitori-tipodoc', async (req, res) => {
+  try {
+    const nomeFiltro = (req.query.nome || '').trim().toUpperCase();
+    const cutoff = DANEA_CUTOFF;
+
+    // Q1: distribuzione TipoDoc su anagrafiche Fornitore=1 (TUTTI i periodi)
+    const q1 = await query(`
+      SELECT d."TipoDoc" AS tipodoc,
+             COUNT(*) AS n,
+             MIN(d."DataDoc") AS dal,
+             MAX(d."DataDoc") AS al,
+             SUM(d."TotDoc") AS tot_importo
+      FROM "TDocTestate" d
+      JOIN "TAnagrafica" a ON a."IDAnagr" = d."IDAnagr"
+      WHERE a."Fornitore" = 1
+      GROUP BY d."TipoDoc"
+      ORDER BY COUNT(*) DESC
+    `);
+
+    // Q2: distribuzione TipoDoc >= cutoff su anagrafiche Fornitore=1
+    const q2 = await query(`
+      SELECT d."TipoDoc" AS tipodoc,
+             COUNT(*) AS n,
+             SUM(d."TotDoc") AS tot_importo,
+             MIN(d."DataDoc") AS dal,
+             MAX(d."DataDoc") AS al
+      FROM "TDocTestate" d
+      JOIN "TAnagrafica" a ON a."IDAnagr" = d."IDAnagr"
+      WHERE a."Fornitore" = 1
+        AND d."DataDoc" >= '${cutoff}'
+      GROUP BY d."TipoDoc"
+      ORDER BY COUNT(*) DESC
+    `);
+
+    // Q3 (se ?nome=): documenti di un fornitore specifico >= cutoff
+    let q3 = [];
+    let q3_anagrafiche = [];
+    if (nomeFiltro) {
+      q3_anagrafiche = await query(`
+        SELECT "IDAnagr" AS idanagr, "CodAnagr" AS codanagr, "Nome" AS nome,
+               "Cliente" AS cliente, "Fornitore" AS fornitore
+        FROM "TAnagrafica"
+        WHERE UPPER("Nome") LIKE '%${nomeFiltro.replace(/'/g, "''")}%'
+      `);
+      if (q3_anagrafiche.length) {
+        const ids = q3_anagrafiche.map(a => parseInt(a.idanagr, 10)).filter(Boolean).join(',');
+        q3 = await query(`
+          SELECT "IDAnagr" AS idanagr, "IDDoc" AS iddoc,
+                 "TipoDoc" AS tipodoc, "DataDoc" AS datadoc,
+                 "NumDoc" AS numdoc, "DescDoc" AS descdoc,
+                 "TotDoc" AS totdoc, "NomeReport" AS nomereport
+          FROM "TDocTestate"
+          WHERE "IDAnagr" IN (${ids})
+            AND "DataDoc" >= '${cutoff}'
+          ORDER BY "DataDoc"
+        `);
+      }
+    }
+
+    // Q4: sample 10 documenti post-cutoff con TipoDoc "unusual" (fuori dalle costanti)
+    const noti = Array.from(new Set([...DANEA_TIPODOC_CLIENTI, ...DANEA_TIPODOC_FORNITORI]));
+    const notiClause = noti.map(t => `'${t}'`).join(',');
+    const q4 = await query(`
+      SELECT FIRST 10
+             d."IDAnagr" AS idanagr, a."Nome" AS nome,
+             d."TipoDoc" AS tipodoc, d."DataDoc" AS datadoc,
+             d."NumDoc" AS numdoc, d."TotDoc" AS totdoc,
+             d."DescDoc" AS descdoc, d."NomeReport" AS nomereport,
+             a."Cliente" AS cliente, a."Fornitore" AS fornitore
+      FROM "TDocTestate" d
+      JOIN "TAnagrafica" a ON a."IDAnagr" = d."IDAnagr"
+      WHERE a."Fornitore" = 1
+        AND d."DataDoc" >= '${cutoff}'
+        AND d."TipoDoc" NOT IN (${notiClause})
+    `);
+
+    res.json({
+      cutoff,
+      filtro_costanti_attuale: DANEA_TIPODOC_FORNITORI,
+      q1_tipodoc_fornitori_all_periods: q1,
+      q2_tipodoc_fornitori_dal_cutoff: q2,
+      q3_filtro_nome: nomeFiltro || null,
+      q3_anagrafiche_trovate: q3_anagrafiche,
+      q3_documenti: q3,
+      q4_sample_tipodoc_fuori_costante: q4,
+      hint: 'Confronta q2: se vedi codici NON in filtro_costanti_attuale, aggiungili a DANEA_TIPODOC_FORNITORI in server.js.'
+    });
+  } catch (e) {
+    console.error('Errore /api/debug/fornitori-tipodoc:', e.message);
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
+// ─── RID AUTOMATICI ──────────────────────────────────────────────────────────
+const RID_DEFAULT = [
+  { id:'rid1',  frequenza:'Fine Mese',  descrizione:'Finanziamento 84 mesi MCC 27/02/18 — scad. 31/12/26', banca:'BDM', importo:2663 },
+  { id:'rid2',  frequenza:'Fine Mese',  descrizione:'Finanziamento 72 mesi MCC 15/09/20 — scad. 30/09/26', banca:'BDM', importo:4678 },
+  { id:'rid3',  frequenza:'Fine Mese',  descrizione:'Leasing Tesla — FCA Bank',                             banca:'BDM', importo:533  },
+  { id:'rid4',  frequenza:'Fine Mese',  descrizione:'Noleggio Toyota Yaris — ALD Automotive',              banca:'BDM', importo:449  },
+  { id:'rid5',  frequenza:'Trimestrale',descrizione:'Affitto — Oznerol SRL',                               banca:'',    importo:29280},
+  { id:'rid6',  frequenza:'Trimestrale',descrizione:'Muletto — Oznerol SRL',                               banca:'',    importo:10370},
+  { id:'rid7',  frequenza:'21/12/26',   descrizione:'Assicurazione Tesla GB811GT — Telepass Assicurazione',banca:'',    importo:270  },
+  { id:'rid8',  frequenza:'28/05/26',   descrizione:'Assicurazione Tesla GN814VY — AXA',                   banca:'',    importo:513  },
+  { id:'rid9',  frequenza:'31/12/26',   descrizione:'Assicurazione Capannone Oznerol — Busnelli/Zurich',   banca:'',    importo:868  },
+  { id:'rid10', frequenza:'02/04/26',   descrizione:'Assicurazione Incendio/Furto Capannone RCT AEC — Busnelli/Zurich', banca:'', importo:2651 }
+];
+
+app.get('/api/rid', (req, res) => {
+  const data = loadData();
+  res.json({ voci: data.rid_voci && data.rid_voci.length ? data.rid_voci : RID_DEFAULT });
+});
+
+app.post('/api/rid', (req, res) => {
+  try {
+    const { voci } = req.body;
+    if (!Array.isArray(voci)) return res.status(400).json({ error: 'voci[] required' });
+    const data = loadData();
+    data.rid_voci = voci;
+    saveData(data);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTRASTAT — generatore scambi.cee per Intr@Web (cessioni intra-UE INTRA 1-bis)
+// Logica core in ./intrastat/  (cee.js, match.js, parsers.js)
+// Anagrafica clienti cachata in ./intrastat_anagrafica.json
+// ─────────────────────────────────────────────────────────────────────────────
+const multer = require('multer');
+const intraParsers = require('./intrastat/parsers');
+const intraMatch = require('./intrastat/match');
+const intraCee = require('./intrastat/cee');
+
+const INTRA_ANAGRAFICA = path.join(__dirname, 'intrastat_anagrafica.json');
+const INTRA_PIVA_DICHIARANTE = process.env.PIVA_DICHIARANTE || '12520320156';
+const intraUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
+
+function intraLoadAnagrafica() {
+  if (!fs.existsSync(INTRA_ANAGRAFICA)) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(INTRA_ANAGRAFICA, 'utf8'));
+    raw.customers.forEach(c => { c._norm = intraMatch.normalize(c.denominazione); });
+    return raw;
+  } catch (e) {
+    console.error('[Intrastat] errore lettura cache anagrafica:', e);
+    return null;
+  }
+}
+
+app.get('/api/intrastat/anagrafica/info', (req, res) => {
+  const a = intraLoadAnagrafica();
+  if (!a) return res.json({ presente: false });
+  res.json({ presente: true, count: a.customers.length, aggiornata: a.aggiornata, nomeFile: a.nomeFile });
+});
+
+app.post('/api/intrastat/anagrafica', intraUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'File mancante' });
+    const customers = await intraParsers.parseAnagrafica(req.file.buffer);
+    const payload = {
+      aggiornata: new Date().toISOString(),
+      nomeFile: req.file.originalname,
+      customers: customers.map(({ _norm, ...c }) => c),
+    };
+    fs.writeFileSync(INTRA_ANAGRAFICA, JSON.stringify(payload, null, 2));
+    res.json({ ok: true, count: customers.length });
+  } catch (e) {
+    console.error('[Intrastat] anagrafica error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/intrastat/quadratura',
+  intraUpload.fields([{ name: 'vendite', maxCount: 1 }, { name: 'pdf', maxCount: 1 }]),
+  async (req, res) => {
+    try {
+      const anagrafica = intraLoadAnagrafica();
+      if (!anagrafica) return res.status(400).json({ error: 'Anagrafica clienti non caricata. Caricala prima.' });
+      if (!req.files?.vendite?.[0]) return res.status(400).json({ error: 'File analisi vendite mancante' });
+
+      const vendite = await intraParsers.parseVendite(req.files.vendite[0].buffer);
+      let commercialista = [];
+      if (req.files?.pdf?.[0]) {
+        try { commercialista = await intraParsers.parseCommercialistaPdf(req.files.pdf[0].buffer); }
+        catch (e) { console.warn('[Intrastat] PDF non leggibile:', e.message); }
+      }
+      const commByPiva = new Map(commercialista.map(c => [c.piva, c]));
+
+      const righe = [];
+      const noMatch = [];
+      for (const v of vendite) {
+        const m = intraMatch.findCustomer(v.denominazione, anagrafica.customers);
+        if (!m) { noMatch.push({ denominazione: v.denominazione, importo: v.importo }); continue; }
+        const c = m.customer;
+        const danea = +v.importo.toFixed(2);
+        const comm = commByPiva.get(c.piva)?.importo;
+        const diff = comm != null ? +(danea - comm).toFixed(2) : null;
+        righe.push({
+          piva: c.piva, denominazione: c.denominazione, nazione: c.nazione,
+          importoDanea: danea, importoCommercialista: comm ?? null, diff,
+          importoFinale: comm != null ? comm : danea,
+          matchStrategy: m.strategy, matchConfidence: m.confidence,
+        });
+      }
+      righe.sort((a, b) => a.piva.localeCompare(b.piva));
+
+      const pivasMatched = new Set(righe.map(r => r.piva));
+      const soloComm = commercialista
+        .filter(c => !pivasMatched.has(c.piva))
+        .map(c => ({ piva: c.piva, denominazione: c.denominazione, importo: c.importo }));
+
+      res.json({
+        righe, noMatch, soloComm,
+        totaleDanea: +(righe.reduce((s, r) => s + r.importoDanea, 0)
+          + noMatch.reduce((s, r) => s + r.importo, 0)).toFixed(2),
+        totaleCommercialista: commercialista.length
+          ? +commercialista.reduce((s, c) => s + c.importo, 0).toFixed(2) : null,
+        commercialistaCaricato: commercialista.length > 0,
+      });
+    } catch (e) {
+      console.error('[Intrastat] quadratura error:', e);
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+app.post('/api/intrastat/genera', (req, res) => {
+  try {
+    const { anno, mese, righe } = req.body || {};
+    if (!anno || !mese || !Array.isArray(righe) || righe.length === 0) {
+      return res.status(400).json({ error: 'Parametri mancanti (anno, mese, righe)' });
+    }
+    for (const r of righe) {
+      if (!/^[A-Z]{2}[A-Z0-9]+$/i.test(r.piva || '')) return res.status(400).json({ error: `P.IVA non valida: "${r.piva}"` });
+      if (typeof r.importo !== 'number' || r.importo <= 0) return res.status(400).json({ error: `Importo non valido per ${r.piva}: ${r.importo}` });
+    }
+    const cee = intraCee.generaScambiCee({
+      pivaDichiarante: INTRA_PIVA_DICHIARANTE,
+      anno: Number(anno), mese: Number(mese),
+      righe: righe.map(r => ({ piva: r.piva.toUpperCase(), importo: Number(r.importo) })),
+    });
+    res.setHeader('Content-Type', 'text/plain; charset=ISO-8859-1');
+    res.setHeader('Content-Disposition', 'attachment; filename="scambi.cee"');
+    res.send(Buffer.from(cee, 'latin1'));
+  } catch (e) {
+    console.error('[Intrastat] genera error:', e);
+    res.status(500).json({ error: e.message });
   }
 });
 

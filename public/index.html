@@ -6122,6 +6122,7 @@ function renderSdi() {
       <th style="padding:4px 6px">IBAN</th>
       <th style="padding:4px 6px">Riferimento</th>
       <th style="text-align:right;padding:4px 6px">Importo</th>
+      <th style="width:32px;padding:4px 6px"></th>
     </tr></thead><tbody>`;
 
   filtered.forEach(f => {
@@ -6179,16 +6180,33 @@ function renderSdi() {
           onchange="setSdiNote('${esc(f.id)}', this.value, this)">
       </td>
       <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;padding:1px 6px">- € ${fmt(f.importo)}</td>
+      <td style="text-align:center;padding:1px 4px">
+        <button onclick="sdiEscludi('${esc(String(f.id_agyo || f.id))}')" title="Nascondi questa fattura dalla lista"
+          style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 4px;border-radius:4px;line-height:1"
+          onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--muted)'">🗑</button>
+      </td>
     </tr>`;
   });
 
   html += `<tr style="border-top:2px solid var(--border);font-weight:700">
-    <td colspan="9">TOTALE FILTRATO</td>
+    <td colspan="10">TOTALE FILTRATO</td>
     <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace">- € ${fmt(totFiltrato)}</td>
   </tr>`;
   html += `</tbody></table>`;
   document.getElementById('sdi-body').innerHTML = html;
   aggiornaSelTotaleSdi();
+}
+
+async function sdiEscludi(idAgyo) {
+  if (!confirm(`Nascondere questa fattura dalla lista?\nPuoi ripristinarla dal server (data.json → sdi_escluse).`)) return;
+  try {
+    const r = await fetch('/api/fatture-sdi/escludi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id_agyo: idAgyo }) });
+    const j = await r.json();
+    if (!j.ok) { alert('Errore: ' + (j.error || 'sconosciuto')); return; }
+    // Rimuovi dalla cache locale e ri-renderizza
+    if (_sdiData) _sdiData.fatture = _sdiData.fatture.filter(f => String(f.id_agyo || f.id) !== String(idAgyo));
+    renderSdi();
+  } catch(e) { alert('Errore: ' + e.message); }
 }
 
 function toggleSdiSortNome() {
