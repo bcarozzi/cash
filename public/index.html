@@ -9312,6 +9312,20 @@ async function allisUpdateField(id, field, val) {
   // Re-sort se scadenza cambiata
   if (field === 'scadenza') { _allisVoci.sort((a,b) => (a.scadenza||'') < (b.scadenza||'') ? -1 : 1); allisRender(); }
 }
+async function allisImportFromWise() {
+  const btn = event.target;
+  btn.textContent = '⏳ Importazione...'; btn.disabled = true;
+  try {
+    const r = await fetch('/api/allis-pagamenti/import-from-wise', { method:'POST' });
+    const j = await r.json();
+    if (!j.ok) { alert('Errore: ' + j.error); return; }
+    await allisLoad();
+    alert(j.aggiunte > 0
+      ? `✅ Importate ${j.aggiunte} nuove scadenze da Pagamenti Fornitori.`
+      : `ℹ️ Nessuna nuova scadenza da importare (già tutte presenti).`);
+  } catch(e) { alert('Errore: ' + e.message); }
+  finally { btn.textContent = '⬇ Importa da Pag. Fornitori'; btn.disabled = false; }
+}
 async function allisDelete(id) {
   if (!confirm('Eliminare questa scadenza?')) return;
   await fetch('/api/allis-pagamenti/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
@@ -9329,6 +9343,8 @@ async function allisDelete(id) {
       <div>
         <span style="font-weight:700;font-size:15px">🌏 Pagamenti Allis Electric Co Ltd</span>
         <span style="font-size:12px;color:var(--muted);margin-left:14px">Da pagare: <strong id="allis-tot-da-pagare" style="color:var(--accent)">€ 0</strong></span>
+        <button onclick="allisImportFromWise()" style="margin-left:16px;font-size:11px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border);color:var(--muted);border-radius:5px;cursor:pointer"
+          title="Importa scadenze Allis da Pagamenti Fornitori (aggiunge solo le nuove)">⬇ Importa da Pag. Fornitori</button>
       </div>
       <button onclick="allisClose()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">×</button>
     </div>

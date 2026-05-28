@@ -1454,6 +1454,50 @@ app.post('/api/wise-sposta-in-sdi', (req, res) => {
 });
 
 // ─── ALLIS ELECTRIC: gestione scadenze manuali ───────────────────────────────
+// Importa le scadenze Allis da TPrimaNota (Pagamenti Fornitori) → allis_scadenze
+// Aggiunge solo voci non già presenti (per scadenza+importo), non sovrascrive esistenti
+app.post('/api/allis-pagamenti/import-from-wise', async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT p."IDPrimaNota", p."Importo", p."DataScad",
+             p."NomePagamDoc", p."RifPagam", p."IDDoc", p."IDAnagr",
+             a."Nome"
+      FROM "TPrimaNota" p
+      LEFT JOIN "TAnagrafica" a ON a."IDAnagr" = p."IDAnagr"
+      WHERE p."Saldato" = 0
+        AND p."Importo" < 0
+        AND (p."CategPagamento" IS NULL OR p."CategPagamento" <> 'Riba')
+        AND LOWER(a."Nome") LIKE '%allis electric%'
+      ORDER BY p."DataScad" ASC
+    `);
+    const data = loadData();
+    if (!data.allis_scadenze) data.allis_scadenze = [];
+    const wiseSaldati  = data.wise_saldati  || {};
+    const wiseSpostate = data.wise_spostate || {};
+    let aggiunte = 0;
+    rows.forEach(r => {
+      if (wiseSaldati[String(r.idprimanota)]) return;
+      const scadenza = isoDate(r.datascad);
+      const importo  = Math.round(Math.abs(Number(r.importo) || 0) * 100) / 100;
+      const rif      = (r.rifpagam || '').trim();
+      // Evita duplicati: stessa scadenza e stesso importo (arrotondato a euro)
+      const exists = data.allis_scadenze.some(v =>
+        v.scadenza === scadenza && Math.round(v.importo) === Math.round(importo)
+      );
+      if (exists) return;
+      data.allis_scadenze.push({
+        id: 'ALLIS_' + Date.now() + '_' + aggiunte,
+        scadenza, importo, rif, pagato: false,
+        creato_il: new Date().toISOString()
+      });
+      aggiunte++;
+    });
+    data.allis_scadenze.sort((a, b) => (a.scadenza || '') < (b.scadenza || '') ? -1 : 1);
+    saveData(data);
+    res.json({ ok: true, aggiunte, totale: data.allis_scadenze.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/allis-pagamenti', (req, res) => {
   const data = loadData();
   res.json({ voci: data.allis_scadenze || [] });
