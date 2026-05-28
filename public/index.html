@@ -552,7 +552,6 @@
       <button class="dropdown-item" onclick="switchTab('riba-fornitori', this)">🏭 RIBA Fornitori</button>
       <button class="dropdown-item" onclick="switchTab('fatture-sdi', this)">💸 Fatture da Pagare</button>
       <button class="dropdown-item" onclick="switchTab('sospesi', this)">⏸ Sospesi / Contestazione</button>
-      <button class="dropdown-item" onclick="switchTab('storico-wise', this)">📋 Storico Pagamenti Fornitori</button>
       <button class="dropdown-item" onclick="switchTab('rid', this)">🔄 RID Automatici</button>
       <button class="dropdown-item" onclick="switchTab('f24', this)">📄 F24</button>
     </div>
@@ -1308,7 +1307,6 @@ async function saveSaldiBanche() {
 let _bancheLoaded = false;
 let _ribaLoaded = false;
 let _ribaFornLoaded = false;
-let _wiseLoaded = false;
 function switchTab(name, el) {
   document.querySelectorAll('.tab-content').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
@@ -1334,9 +1332,8 @@ _opLoaded = true; loadOperazioni(); }
   if (name === 'rimesse' && !_rimesseLoaded)       { _rimesseLoaded = true;  loadRimesse(); }
   if (name === 'riba'   && !_ribaLoaded)         { _ribaLoaded = true;     loadRiba(); }
   if (name === 'riba-fornitori' && !_ribaFornLoaded) { _ribaFornLoaded = true; loadRibaFornitori(); }
-  if (name === 'storico-wise')                     { loadStoricoWise(); }
   if (name === 'rid')                              { if (!_ridData) loadRid(); else renderRid(); }
-  if (name === 'fatture-sdi')                      { if (!_sdiData) loadFattureSdi(); else renderSdi(); if (!_wiseLoaded) { _wiseLoaded = true; loadWise(); } }
+  if (name === 'fatture-sdi')                      { if (!_sdiData) loadFattureSdi(); else renderSdi(); }
   if (name === 'sospesi')                          { if (!_sospesiData) loadSospesi(); else renderSospesi(); }
   if (name === 'operazioni') { if (!_opLoaded) { _opLoaded = true; loadOperazioni(); } else { renderOperazioni(); } }
   if (name === 'checklist')                         { loadChecklist(); }
@@ -7599,32 +7596,6 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal()
 </div><!-- end tab-riba-fornitori -->
 
 <!-- TAB: WISE EXPORT -->
-<div id="tab-wise" class="tab-content">
-<!-- Spostato in tab-fatture-sdi -->
-</div><!-- end tab-wise -->
-
-<!-- TAB: STORICO WISE -->
-<div id="tab-storico-wise" class="tab-content">
-<div class="main">
-  <div class="card">
-    <div class="card-header">
-      📋 Storico Pagamenti
-      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <span id="storico-wise-totale" style="font-size:12px;color:var(--muted)"></span>
-        <button class="btn-add" onclick="loadStoricoWise()" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">🔄 Aggiorna</button>
-      </div>
-    </div>
-    <!-- Filtro ricerca fornitore -->
-    <div style="padding:10px 16px;border-bottom:1px solid var(--border)">
-      <input type="text" id="storico-cerca" oninput="renderStorico()" placeholder="🔍 Cerca fornitore..."
-        style="width:100%;max-width:340px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:12px">
-    </div>
-    <div id="wise-storico-body" style="padding:16px;min-height:200px">
-      <div style="color:var(--muted);font-size:12px;text-align:center;padding:40px">Apri questo tab per caricare lo storico</div>
-    </div>
-  </div>
-</div>
-</div><!-- end tab-storico-wise -->
 
 <!-- TAB: FATTURE SDI -->
 <div id="tab-fatture-sdi" class="tab-content">
@@ -7684,60 +7655,6 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal()
     </div>
   </div>
 
-  <!-- ═══ SEZIONE: PAGAMENTI IN DANEA (ex "Pagamenti Fornitori") ═══ -->
-  <div style="margin-top:8px;padding:6px 0 2px 0;display:flex;align-items:center;gap:10px">
-    <div style="height:1px;flex:1;background:var(--border)"></div>
-    <span style="font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.06em;white-space:nowrap">PAGAMENTI IN DANEA (da prima nota)</span>
-    <div style="height:1px;flex:1;background:var(--border)"></div>
-  </div>
-
-  <div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
-    <div class="kpi"><div class="kpi-label">Danea: Da Pagare</div><div class="kpi-val red" id="we-totale">—</div></div>
-    <div class="kpi"><div class="kpi-label">Selezionati</div><div class="kpi-val blue" id="we-sel-tot">€ 0,00</div></div>
-    <div class="kpi"><div class="kpi-label">Con IBAN</div><div class="kpi-val green" id="we-con-iban">—</div></div>
-    <div class="kpi"><div class="kpi-label">Senza IBAN</div><div class="kpi-val orange" id="we-senza-iban">—</div></div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">
-      💳 Pagamenti Fornitori — Genera CSV Wise
-      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <button class="btn-add" onclick="ricaricaWise()" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">🔄 Aggiorna</button>
-        <button class="btn-add" onclick="selectAllWise(true)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Seleziona tutti</button>
-        <button class="btn-add" onclick="selectAllWise(false)" style="font-size:11px;padding:5px 10px;background:var(--panel3);border:1px solid var(--border)">Deseleziona</button>
-        <button class="btn-add" onclick="stampaSelezione('wise')" style="background:#1e3a5f;border:1px solid #2563eb">🖨 Stampa</button>
-        <button class="btn-add" onclick="exportWiseCSV()" style="background:#2d6a4f;border:1px solid #40916c">⬇ Scarica CSV Wise</button>
-        <button class="btn-add" onclick="segnaPagatiDanea()" style="background:#7c3aed;border:1px solid #a855f7">✓ Segna Pagati in Danea</button>
-      </div>
-    </div>
-
-    <!-- Filtri -->
-    <div class="filtri">
-      <label>Scadenza da:</label>
-      <input type="date" id="we-da" oninput="renderWise()" style="color-scheme:dark">
-      <label>a:</label>
-      <input type="date" id="we-a" oninput="renderWise()" style="color-scheme:dark">
-      <button onclick="setWiseMese(-1)" style="font-size:10px;padding:4px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">MESE SCORSO</button>
-      <button onclick="setWiseMese(0)" style="font-size:10px;padding:4px 8px;background:var(--accent);border:1px solid var(--accent);color:#fff;border-radius:4px;cursor:pointer">MESE CORRENTE</button>
-      <button onclick="setWiseMese(1)" style="font-size:10px;padding:4px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">MESE PROSSIMO</button>
-      <button onclick="setWiseMese(null)" style="font-size:10px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer">TUTTI</button>
-      <div class="filtri-spacer"></div>
-      <input type="text" id="we-cerca" oninput="renderWise()" placeholder="🔍 Cerca fornitore..."
-        style="padding:4px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;width:200px">
-      <label style="font-size:11px;color:var(--muted)">
-        <input type="checkbox" id="we-solo-iban" onchange="renderWise()" style="margin-right:4px">
-        Solo con IBAN
-      </label>
-      <label style="font-size:11px;color:var(--muted);margin-left:12px">
-        <input type="checkbox" id="we-solo-italia" onchange="renderWise()" style="margin-right:4px">
-        Solo italiani
-      </label>
-    </div>
-
-    <div style="overflow-x:auto" id="we-body">
-      <div class="loading">Caricamento...</div>
-    </div>
-  </div>
 
 </div>
 </div><!-- end tab-fatture-sdi -->
