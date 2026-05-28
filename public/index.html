@@ -6180,7 +6180,7 @@ function renderSdi() {
           style="background:transparent;border:1px solid var(--border);color:var(--text);padding:1px 6px;border-radius:4px;font-size:11px;width:110px;line-height:1.2"
           onchange="setSdiNote('${esc(f.id)}', this.value, this)">
       </td>
-      <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;padding:1px 6px">- € ${fmt(f.importo)}</td>
+      <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;padding:1px 6px;white-space:nowrap;min-width:120px">- € ${fmt(f.importo)}</td>
       <td style="text-align:center;padding:1px 4px">
         <button onclick="sdiEscludi('${esc(String(f.id_agyo || f.id))}')" title="Nascondi questa fattura dalla lista"
           style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 4px;border-radius:4px;line-height:1"
