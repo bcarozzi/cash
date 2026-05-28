@@ -22,7 +22,7 @@ const DATA_FILE = path.join(__dirname, 'cashflow_data.json');
 // Nomi case-insensitive (anche parziali). Aggiungere qui quando necessario.
 // Fornitori esclusi da Fatture da Pagare (pagamento automatico, non gestiti manualmente)
 const FORNITORI_ESCLUSI_SDI = [
-  'amazon', 'unipoltech', 'ald automotive', 'iliad'
+  'amazon', 'unipoltech', 'ald automotive', 'iliad', 'wind tre', 'ca auto bank'
 ];
 
 const FORNITORI_ESTERI_OVERRIDE = [
@@ -1161,9 +1161,16 @@ function calcolaRateDaPagamento(dataDoc, pagamentoDefault) {
   if (!dataDoc) return [{ scadenza: null, quota: 1 }];
   const str = (pagamentoDefault || '').toLowerCase();
 
-  // Pagamento immediato
-  if (!str || str.includes('vista') || str.includes('advance') || str.includes('anticipo') || str.includes('subito') || str.includes('immediat')) {
+  // Pagamento immediato (esplicito)
+  if (str.includes('vista') || str.includes('advance') || str.includes('anticipo') || str.includes('subito') || str.includes('immediat')) {
     return [{ scadenza: new Date(dataDoc).toISOString().slice(0,10), quota: 1 }];
+  }
+
+  // Nessun termine di pagamento noto → default 30gg (non usare dataDoc come scadenza)
+  if (!str) {
+    const d = new Date(dataDoc);
+    d.setDate(d.getDate() + 30);
+    return [{ scadenza: d.toISOString().slice(0,10), quota: 1 }];
   }
 
   // Fine Mese?
@@ -1316,7 +1323,8 @@ app.get('/api/fatture-sdi', async (req, res) => {
       const importoTot    = Math.abs(Number(r.totdovuto) || 0);
       const cf            = (r.codicefiscale || '').trim();
       const piva          = (r.partitaiva || '').trim();
-      const pagamento     = pagMap[cf] || pagMap[piva] || null;
+      const azCf          = (r.az_codicefiscale || '').trim(); // P.IVA/CF aziendale in TAgyo
+      const pagamento     = pagMap[cf] || pagMap[piva] || pagMap[azCf] || null;
       const rate          = calcolaRateDaPagamento(dataDoc, pagamento);
       const nRate         = rate.length;
 
@@ -1340,8 +1348,8 @@ app.get('/api/fatture-sdi', async (req, res) => {
           scadenza:        scadOverride || rata.scadenza || null,
           scadenza_manual: !!scadOverride,
           importo:         Math.round(importoTot * rata.quota * 100) / 100,
-          iban:            ibanMap[cf] || ibanMap[piva] || null,
-          iban_manuale:    sdiIbanManuali[cf] || sdiIbanManuali[piva] || null,
+          iban:            ibanMap[cf] || ibanMap[piva] || ibanMap[azCf] || null,
+          iban_manuale:    sdiIbanManuali[cf] || sdiIbanManuali[piva] || sdiIbanManuali[azCf] || null,
           note:            sdiNote[rataId] || '',
           addebito_diretto: isAddebitoDiretto,
           controllata:     !!sdiControllate[rataId]
@@ -1354,6 +1362,8 @@ app.get('/api/fatture-sdi', async (req, res) => {
     sdiManuali.forEach(m => {
       if (sdiSaldati[m.id]) return; // già segnata come pagata
       if (sdiEscluse[m.id]) return; // nascosta manualmente
+      const mNomeL = (m.nome || '').toLowerCase();
+      if (FORNITORI_ESCLUSI_SDI.some(p => mNomeL.includes(p))) return; // fornitore escluso
       const scadOverride = sdiScadenze[m.id] || null;
       fatture.push({
         ...m,
