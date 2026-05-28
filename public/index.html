@@ -6546,6 +6546,7 @@ function setWiseMese(offset) {
 let _wiseData = null;
 let _wiseIbanOverride = {}; // IBAN inseriti manualmente per IDAnagr
 let _wiseSortNome = false; // false = scadenza ASC, true = nome A→Z, null = nome Z→A
+let _wiseRowMap = {}; // mappa rowKey → oggetto riga (evita JSON inline negli onclick)
 
 function toggleWiseSortNome() {
   if (_wiseSortNome === false)      _wiseSortNome = true;
@@ -6564,14 +6565,17 @@ async function loadWise() {
   }
 }
 
-async function wiseSposta(rowKey, riga) {
+async function wiseSposta(rowKey) {
+  const riga = _wiseRowMap[rowKey];
+  if (!riga) { alert('Riga non trovata — ricarica la pagina.'); return; }
   if (!confirm(`Spostare "${riga.nome}" (€ ${fmt(riga.importo)}) in Fatture da Pagare?`)) return;
   try {
-    const r = await fetch('/api/wise-sposta-in-sdi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ riga }) });
-    const j = await r.json();
+    const resp = await fetch('/api/wise-sposta-in-sdi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ riga }) });
+    const j = await resp.json();
     if (!j.ok) { alert('Errore: ' + (j.error || 'sconosciuto')); return; }
     // Rimuovi dalla cache Wise e aggiorna
-    if (_wiseData) _wiseData.righe = _wiseData.righe.filter(r => (r.id_anagr + '_' + r.data_scad) !== rowKey);
+    if (_wiseData) _wiseData.righe = _wiseData.righe.filter(x => (x.id_anagr + '_' + x.data_scad) !== rowKey);
+    delete _wiseRowMap[rowKey];
     renderWise();
     // Forza ricarica Fatture da Pagare per includere la nuova voce
     _sdiData = null;
@@ -6639,6 +6643,7 @@ function renderWise() {
       <th style="width:32px"></th>
     </tr></thead><tbody>`;
 
+  _wiseRowMap = {}; // reset mappa per questo render
   filtered.forEach(r => {
     const ibanEff = _wiseIbanOverride[r.id_anagr] || r.iban;
     const isEstero = r.estero || (r.nazione && r.nazione !== '' && r.nazione.toLowerCase() !== 'italia');
@@ -6647,6 +6652,7 @@ function renderWise() {
     const isScad  = scad && scad < today2;
     const chkId   = `we-chk-${r.id_anagr}_${r.data_scad}`;
     const rowKey  = r.id_anagr + '_' + r.data_scad;
+    _wiseRowMap[rowKey] = r; // salva in mappa per wiseSposta
 
     html += `<tr data-key="${rowKey}" style="${!ibanOk ? 'background:rgba(245,158,11,.04)' : ''}">
       <td style="text-align:center;padding:8px 6px">
@@ -6682,7 +6688,7 @@ function renderWise() {
       <td style="font-size:11px;color:var(--dim)">${r.rif || '—'}</td>
       <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">- € ${fmt(r.importo)}</td>
       <td style="text-align:center;padding:4px">
-        <button onclick="wiseSposta('${rowKey}', ${JSON.stringify(r).replace(/'/g,"\\'")})" title="Sposta in Fatture da Pagare"
+        <button onclick="wiseSposta('${rowKey}')" title="Sposta in Fatture da Pagare"
           style="background:transparent;border:1px solid var(--accent);color:var(--accent);cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;line-height:1.4"
           onmouseover="this.style.background='var(--accent)';this.style.color='#fff'" onmouseout="this.style.background='transparent';this.style.color='var(--accent)'">→ SDI</button>
       </td>
