@@ -6161,7 +6161,8 @@ function renderSdi() {
       <td style="font-size:12px;padding:1px 4px">
         <input type="date" value="${f.scadenza || ''}"
           class="${isScad ? 'is-scaduta' : ''}"
-          style="background:${f.scadenza_manual ? 'rgba(8,145,178,.1)' : 'transparent'};border:1px solid ${isScad ? 'var(--red)' : f.scadenza_manual ? 'var(--cyan)' : 'var(--border)'};color:${isScad ? 'var(--red)' : 'var(--text)'};border-radius:4px;padding:1px 4px;font-size:11px;color-scheme:dark;line-height:1.2;${isScad ? 'font-weight:600' : ''}"
+          title="${f.scadenza_manual ? 'Scadenza impostata manualmente' : f.scadenza_da_xml ? 'Scadenza da XML fattura elettronica' : 'Scadenza stimata da termini di pagamento'}"
+          style="background:${f.scadenza_manual ? 'rgba(8,145,178,.1)' : f.scadenza_da_xml ? 'rgba(34,197,94,.1)' : 'transparent'};border:1px solid ${isScad ? 'var(--red)' : f.scadenza_manual ? 'var(--cyan)' : f.scadenza_da_xml ? '#22c55e' : 'var(--border)'};color:${isScad ? 'var(--red)' : 'var(--text)'};border-radius:4px;padding:1px 4px;font-size:11px;color-scheme:dark;line-height:1.2;${isScad ? 'font-weight:600' : ''}"
           onchange="setSdiScadenza('${esc(f.id)}', this.value, this)">
       </td>
       <td style="font-size:12px;font-weight:500;padding:1px 6px">${sdiHasXml(f.cf,f.numdoc,f.piva)
@@ -6990,7 +6991,7 @@ function sdiHasXml(cf, numdoc, piva) {
   return false;
 }
 
-// Ritorna { iban, idPaese } estratti dall'XML se disponibili
+// Ritorna { iban, idPaese, scadenza } estratti dall'XML se disponibili
 function sdiXmlInfo(cf, numdoc, piva) {
   if (!Object.keys(_sdiXmlMap).length) return null;
   const ids = [cf, piva].filter(Boolean);
@@ -6998,7 +6999,8 @@ function sdiXmlInfo(cf, numdoc, piva) {
     const d = _sdiXmlMap[_sdiNormKey(id, numdoc)] || _sdiXmlMap[_sdiNormId(id)];
     if (d) {
       const iban = (d.pagamento && d.pagamento.iban) ? d.pagamento.iban.replace(/\s/g,'').toUpperCase() : '';
-      return { iban, idPaese: (d.idPaese || '').toUpperCase() };
+      const scadXml = (d.pagamento && d.pagamento.scadenza) ? d.pagamento.scadenza.trim() : '';
+      return { iban, idPaese: (d.idPaese || '').toUpperCase(), scadenza: scadXml };
     }
   }
   return null;

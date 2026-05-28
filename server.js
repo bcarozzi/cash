@@ -1203,12 +1203,36 @@ function calcolaRateDaPagamento(dataDoc, pagamentoDefault) {
 }
 
 // ─── FATTURE SDI: lista da pagare ────────────────────────────────────────────
+// Helper: estrae DataScadenzaPagamento dall'XML mappa server-side
+function getXmlScadenza(cf, piva, numdoc, xmlMap) {
+  if (!xmlMap || !Object.keys(xmlMap).length) return null;
+  const normKey = (id, num) =>
+    (id||'').replace(/\s/g,'').toUpperCase() + '_' +
+    (num||'').trim().toUpperCase().replace(/\s+/g,'-');
+  const normId  = (id) => (id||'').replace(/\s/g,'').toUpperCase();
+  const ids = [cf, piva].filter(Boolean);
+  for (const id of ids) {
+    const d = xmlMap[normKey(id, numdoc)] || xmlMap[normId(id)];
+    if (d && d.pagamento && d.pagamento.scadenza) {
+      // Formato XML: DD/MM/YYYY → ISO YYYY-MM-DD
+      const s = d.pagamento.scadenza.trim();
+      const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+      // Già ISO o altro formato leggibile
+      const dt = new Date(s);
+      if (!isNaN(dt)) return dt.toISOString().slice(0,10);
+    }
+  }
+  return null;
+}
+
 app.get('/api/fatture-sdi', async (req, res) => {
   try {
     const data = loadData();
     const sdiSaldati     = data.sdi_saldati     || {};
     const sdiScadenze    = data.sdi_scadenze    || {};
     const sdiControllate = data.sdi_controllate || {};
+    const fattureXml     = data.fatture_xml     || {};
 
     // Query 1: fatture TAgyo non ancora registrate in Danea
     // Niente filtro data in SQL (Firebird è sensibile al formato) — filtriamo in JS
@@ -1328,11 +1352,17 @@ app.get('/api/fatture-sdi', async (req, res) => {
       const rate          = calcolaRateDaPagamento(dataDoc, pagamento);
       const nRate         = rate.length;
 
+      // Scadenza da XML (più precisa della stima da TAnagrafica)
+      const numdocTrim = (r.numdoc || '').trim();
+      const xmlScad = getXmlScadenza(cf, piva, numdocTrim, fattureXml);
+
       rate.forEach((rata, idx) => {
         const rataId       = nRate > 1 ? `${r.idagyo}_r${idx+1}` : r.idagyo;
         const scadOverride = sdiScadenze[rataId] || null;
         const nomeL = (r.nome || '').toLowerCase();
         const isAddebitoDiretto = FORNITORI_ADDEBITO_DIRETTO.some(p => nomeL.includes(p.toLowerCase()));
+        // Priorità: 1) override manuale, 2) XML DataScadenzaPagamento, 3) calcolata
+        const scadFinale = scadOverride || xmlScad || rata.scadenza || null;
         fatture.push({
           id:              rataId,
           id_agyo:         r.idagyo,
@@ -1340,13 +1370,14 @@ app.get('/api/fatture-sdi', async (req, res) => {
           nome:            (r.nome || '').trim(),
           cf:              cf,
           piva:            piva,
-          numdoc:          (r.numdoc || '').trim(),
+          numdoc:          numdocTrim,
           tipodoc:         (r.tipodocfe || '').trim(),
           data_doc:        dataDoc ? dataDoc.toISOString().slice(0,10) : null,
           data_ricezione:  r.dataricezione ? new Date(r.dataricezione).toISOString().slice(0,10) : null,
           pagamento_desc:  (pagamento || '').trim(),
-          scadenza:        scadOverride || rata.scadenza || null,
+          scadenza:        scadFinale,
           scadenza_manual: !!scadOverride,
+          scadenza_da_xml: !scadOverride && !!xmlScad,
           importo:         Math.round(importoTot * rata.quota * 100) / 100,
           iban:            ibanMap[cf] || ibanMap[piva] || ibanMap[azCf] || null,
           iban_manuale:    sdiIbanManuali[cf] || sdiIbanManuali[piva] || sdiIbanManuali[azCf] || null,
