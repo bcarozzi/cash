@@ -7699,7 +7699,9 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal()
       <button onclick="setWiseMese(null)" style="font-size:10px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer">TUTTI</button>
       <div class="filtri-spacer"></div>
       <input type="text" id="we-cerca" oninput="renderWise()" placeholder="🔍 Cerca fornitore..."
-        style="padding:4px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;width:200px">
+        style="padding:4px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;width:140px">
+      <button onclick="allisOpen()" style="font-size:11px;padding:4px 10px;background:var(--panel2);border:1px solid var(--accent);color:var(--accent);border-radius:4px;cursor:pointer;white-space:nowrap;font-weight:600"
+        onmouseover="this.style.background='var(--accent)';this.style.color='#fff'" onmouseout="this.style.background='var(--panel2)';this.style.color='var(--accent)'">🌏 Pagamenti ALLIS</button>
       <label style="font-size:11px;color:var(--muted)">
         <input type="checkbox" id="we-solo-iban" onchange="renderWise()" style="margin-right:4px">
         Solo con IBAN
@@ -9220,7 +9222,144 @@ function f24GeraModulo(idx) {
     a.remove();
   }
 })();
+
+// ─── ALLIS ELECTRIC: pagamenti dedicati ──────────────────────────────────────
+let _allisVoci = [];
+
+async function allisOpen() {
+  document.getElementById('allis-modal').style.display = 'flex';
+  await allisLoad();
+}
+function allisClose() {
+  document.getElementById('allis-modal').style.display = 'none';
+}
+async function allisLoad() {
+  try {
+    const r = await fetch('/api/allis-pagamenti');
+    const j = await r.json();
+    _allisVoci = j.voci || [];
+    allisRender();
+  } catch(e) { alert('Errore caricamento Allis: ' + e.message); }
+}
+function allisRender() {
+  const fmtE = n => '€ ' + new Intl.NumberFormat('it-IT', {minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false}).format(n||0);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const voci = _allisVoci;
+  const totDa = voci.filter(v => !v.pagato).reduce((s,v) => s + (v.importo||0), 0);
+  document.getElementById('allis-tot-da-pagare').textContent = fmtE(totDa);
+
+  if (!voci.length) {
+    document.getElementById('allis-body').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--dim)">Nessuna scadenza inserita</td></tr>';
+    return;
+  }
+  let html = '';
+  voci.forEach(v => {
+    const scad = v.scadenza ? new Date(v.scadenza) : null;
+    const isScad = !v.pagato && scad && scad < today;
+    const rowStyle = v.pagato ? 'opacity:0.45' : isScad ? 'background:rgba(239,68,68,.05)' : '';
+    const dateFmt = v.scadenza ? v.scadenza.split('-').reverse().join('/') : '—';
+    html += `<tr style="${rowStyle}">
+      <td style="text-align:center;padding:6px 8px">
+        <input type="checkbox" ${v.pagato?'checked':''} title="${v.pagato?'Segna come da pagare':'Segna come pagato'}"
+          onchange="allisTogglePagato('${v.id}', this.checked)">
+      </td>
+      <td style="font-size:12px;padding:4px 8px">
+        <input type="date" value="${v.scadenza||''}" style="background:transparent;border:1px solid var(--border);border-radius:4px;color:${isScad?'var(--red)':'var(--text)'};padding:1px 5px;font-size:11px;color-scheme:dark;font-weight:${isScad?'600':'400'}"
+          onchange="allisUpdateField('${v.id}','scadenza',this.value)">
+      </td>
+      <td style="text-align:right;padding:4px 8px">
+        <input type="number" value="${v.importo||''}" step="0.01" style="background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:1px 5px;font-size:12px;text-align:right;width:100px;font-family:'DM Mono',monospace"
+          onchange="allisUpdateField('${v.id}','importo',this.value)">
+      </td>
+      <td style="padding:4px 8px">
+        <input type="text" value="${v.rif||''}" placeholder="Riferimento…" style="background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text);padding:1px 6px;font-size:11px;width:180px"
+          onchange="allisUpdateField('${v.id}','rif',this.value)">
+      </td>
+      <td style="text-align:center;padding:4px 8px">
+        <button onclick="allisDelete('${v.id}')" title="Elimina"
+          style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px"
+          onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--muted)'">🗑</button>
+      </td>
+    </tr>`;
+  });
+  document.getElementById('allis-body').innerHTML = html;
+}
+async function allisAdd() {
+  const scad = document.getElementById('allis-new-scad').value;
+  const imp  = document.getElementById('allis-new-imp').value;
+  const rif  = document.getElementById('allis-new-rif').value;
+  if (!scad || !imp) { alert('Inserisci scadenza e importo.'); return; }
+  const r = await fetch('/api/allis-pagamenti/add', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ scadenza: scad, importo: Number(imp), rif }) });
+  const j = await r.json();
+  if (!j.ok) { alert('Errore: ' + j.error); return; }
+  _allisVoci.push(j.voce);
+  _allisVoci.sort((a,b) => (a.scadenza||'') < (b.scadenza||'') ? -1 : 1);
+  document.getElementById('allis-new-scad').value = '';
+  document.getElementById('allis-new-imp').value  = '';
+  document.getElementById('allis-new-rif').value  = '';
+  allisRender();
+}
+async function allisTogglePagato(id, pagato) {
+  await fetch('/api/allis-pagamenti/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id, pagato }) });
+  const v = _allisVoci.find(x => x.id === id);
+  if (v) v.pagato = pagato;
+  allisRender();
+}
+async function allisUpdateField(id, field, val) {
+  const body = { id, [field]: field === 'importo' ? Number(val) : val };
+  await fetch('/api/allis-pagamenti/update', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const v = _allisVoci.find(x => x.id === id);
+  if (v) v[field] = field === 'importo' ? Number(val) : val;
+  // Re-sort se scadenza cambiata
+  if (field === 'scadenza') { _allisVoci.sort((a,b) => (a.scadenza||'') < (b.scadenza||'') ? -1 : 1); allisRender(); }
+}
+async function allisDelete(id) {
+  if (!confirm('Eliminare questa scadenza?')) return;
+  await fetch('/api/allis-pagamenti/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+  _allisVoci = _allisVoci.filter(v => v.id !== id);
+  allisRender();
+}
 </script>
+
+<!-- ALLIS MODAL -->
+<div id="allis-modal" onclick="if(event.target===this)allisClose()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1400;align-items:flex-start;justify-content:center;padding:40px 20px;overflow-y:auto">
+  <div style="width:100%;max-width:780px;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+    <!-- Header -->
+    <div style="padding:14px 20px;background:var(--panel2);display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+      <div>
+        <span style="font-weight:700;font-size:15px">🌏 Pagamenti Allis Electric Co Ltd</span>
+        <span style="font-size:12px;color:var(--muted);margin-left:14px">Da pagare: <strong id="allis-tot-da-pagare" style="color:var(--accent)">€ 0</strong></span>
+      </div>
+      <button onclick="allisClose()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;line-height:1">×</button>
+    </div>
+    <!-- Tabella -->
+    <div style="padding:16px 20px">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="font-size:11px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">
+            <th style="padding:4px 8px;width:36px">Pagato</th>
+            <th style="padding:4px 8px;text-align:left">Scadenza</th>
+            <th style="padding:4px 8px;text-align:right">Importo €</th>
+            <th style="padding:4px 8px;text-align:left">Riferimento</th>
+            <th style="padding:4px 8px;width:36px"></th>
+          </tr>
+        </thead>
+        <tbody id="allis-body">
+          <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--dim)">Caricamento...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- Aggiungi -->
+    <div style="padding:12px 20px 16px;border-top:1px solid var(--border);background:var(--panel2);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase">+ Nuova scadenza:</span>
+      <input type="date" id="allis-new-scad" style="padding:5px 9px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;color-scheme:dark">
+      <input type="number" id="allis-new-imp" placeholder="Importo €" step="0.01" style="padding:5px 9px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;width:110px;font-family:'DM Mono',monospace">
+      <input type="text" id="allis-new-rif" placeholder="Riferimento / N° fattura" style="padding:5px 9px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;width:200px">
+      <button onclick="allisAdd()" style="padding:5px 14px;background:var(--accent);border:none;color:#fff;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">Aggiungi</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

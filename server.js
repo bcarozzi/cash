@@ -1443,7 +1443,7 @@ app.post('/api/wise-sposta-in-sdi', (req, res) => {
         importo:         riga.importo || 0,
         iban:            riga.iban || null,
         iban_manuale:    null,
-        note:            '',
+        note:            riga.rif || '',
         addebito_diretto: !!riga.addebito_diretto,
         controllata:     false
       });
@@ -1451,6 +1451,48 @@ app.post('/api/wise-sposta-in-sdi', (req, res) => {
     saveData(data);
     res.json({ ok: true, id });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── ALLIS ELECTRIC: gestione scadenze manuali ───────────────────────────────
+app.get('/api/allis-pagamenti', (req, res) => {
+  const data = loadData();
+  res.json({ voci: data.allis_scadenze || [] });
+});
+
+app.post('/api/allis-pagamenti/add', (req, res) => {
+  const { scadenza, importo, rif } = req.body;
+  if (!scadenza || !importo) return res.status(400).json({ error: 'scadenza e importo obbligatori' });
+  const data = loadData();
+  if (!data.allis_scadenze) data.allis_scadenze = [];
+  const voce = { id: 'ALLIS_' + Date.now(), scadenza, importo: Number(importo), rif: rif || '', pagato: false, creato_il: new Date().toISOString() };
+  data.allis_scadenze.push(voce);
+  data.allis_scadenze.sort((a, b) => (a.scadenza || '') < (b.scadenza || '') ? -1 : 1);
+  saveData(data);
+  res.json({ ok: true, voce });
+});
+
+app.post('/api/allis-pagamenti/update', (req, res) => {
+  const { id, scadenza, importo, rif, pagato } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const data = loadData();
+  const idx = (data.allis_scadenze || []).findIndex(v => v.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'voce non trovata' });
+  if (scadenza !== undefined) data.allis_scadenze[idx].scadenza = scadenza;
+  if (importo !== undefined) data.allis_scadenze[idx].importo = Number(importo);
+  if (rif     !== undefined) data.allis_scadenze[idx].rif     = rif;
+  if (pagato  !== undefined) data.allis_scadenze[idx].pagato  = !!pagato;
+  data.allis_scadenze.sort((a, b) => (a.scadenza || '') < (b.scadenza || '') ? -1 : 1);
+  saveData(data);
+  res.json({ ok: true });
+});
+
+app.post('/api/allis-pagamenti/delete', (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const data = loadData();
+  data.allis_scadenze = (data.allis_scadenze || []).filter(v => v.id !== id);
+  saveData(data);
+  res.json({ ok: true });
 });
 
 // ─── FATTURE SDI: modifica scadenza manuale ───────────────────────────────────
