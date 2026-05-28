@@ -7628,6 +7628,7 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal()
         <button class="btn-add" onclick="stampaSelezione('sdi')" style="background:#1e3a5f;border:1px solid #2563eb">🖨 Stampa</button>
         <button class="btn-add" onclick="exportSdiWiseCSV()" style="background:#2d6a4f;border:1px solid #40916c">⬇ Scarica CSV Wise</button>
         <button class="btn-add" onclick="segnaSdiPagate()" style="background:#166534;border:1px solid #16a34a">✓ Segna come Pagate</button>
+        <button class="btn-add" onclick="allisOpen()" style="background:#1a3a2a;border:1px solid #22c55e;color:#22c55e">🌏 Pagamenti ALLIS</button>
       </div>
     </div>
 
@@ -7699,9 +7700,7 @@ document.addEventListener('keydown', e => { if(e.key==='Escape') sdiCloseModal()
       <button onclick="setWiseMese(null)" style="font-size:10px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);border-radius:4px;cursor:pointer">TUTTI</button>
       <div class="filtri-spacer"></div>
       <input type="text" id="we-cerca" oninput="renderWise()" placeholder="🔍 Cerca fornitore..."
-        style="padding:4px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;width:140px">
-      <button onclick="allisOpen()" style="font-size:11px;padding:4px 10px;background:var(--panel2);border:1px solid var(--accent);color:var(--accent);border-radius:4px;cursor:pointer;white-space:nowrap;font-weight:600"
-        onmouseover="this.style.background='var(--accent)';this.style.color='#fff'" onmouseout="this.style.background='var(--panel2)';this.style.color='var(--accent)'">🌏 Pagamenti ALLIS</button>
+        style="padding:4px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;width:200px">
       <label style="font-size:11px;color:var(--muted)">
         <input type="checkbox" id="we-solo-iban" onchange="renderWise()" style="margin-right:4px">
         Solo con IBAN
