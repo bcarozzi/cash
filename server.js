@@ -1341,6 +1341,9 @@ app.get('/api/fatture-sdi', async (req, res) => {
       return !FORNITORI_ESCLUSI_SDI.some(p => nomeL.includes(p));
     });
 
+    // Escludi autofatture estero (numeri con /RC = reverse charge, non da pagare)
+    rows = rows.filter(r => !String(r.numdoc || '').toUpperCase().includes('/RC'));
+
     const fatture = [];
     rows.filter(r => !sdiSaldati[r.idagyo]).forEach(r => {
       const dataDoc       = r.datadoc ? new Date(r.datadoc) : null;
