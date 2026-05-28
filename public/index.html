@@ -718,7 +718,7 @@ function toggleTheme() {
 })();
 
 const BASE = '';
-const fmt = n => new Intl.NumberFormat('it-IT', {minimumFractionDigits:0, maximumFractionDigits:0, useGrouping:false}).format(n);
+const fmt = n => new Intl.NumberFormat('it-IT', {minimumFractionDigits:2, maximumFractionDigits:2, useGrouping:false}).format(n);
 // Pulisce un valore stringa proveniente da banche: tratta il punto come separatore migliaia
 // es. "1.500" → 1500, "1.500,75" → 1500.75, "1500.75" → 1500.75 (punto decimale)
 function parseBankNumber(s) {
@@ -2507,7 +2507,7 @@ function qpRenderTable() {
     const mb = r.match_by ? `<span style="font-size:10px;padding:1px 6px;border:1px solid var(--border);border-radius:8px;background:var(--panel3);color:var(--muted)">${esc(r.match_by)}</span>` : '';
 
     // Tooltip scomposizione saldo Danea (visibile al hover)
-    const fmtN = v => v == null ? '—' : Number(v).toLocaleString('it-IT', { minimumFractionDigits:0, maximumFractionDigits:0, useGrouping:false });
+    const fmtN = v => v == null ? '—' : Number(v).toLocaleString('it-IT', { minimumFractionDigits:2, maximumFractionDigits:2, useGrouping:false });
     const tipD = _qpData.tipo === 'fornitori' ? 'Avere-Dare' : 'Dare-Avere';
     const tipFromIso = _qpData.from || '—';
     const tooltipSaldo = r.saldo_danea == null ? '' :
@@ -2582,7 +2582,7 @@ function qpOpenDaneaDetail(idAnagr) {
           const t = j.totali || {};
           const src = j.saldo_iniziale_source || {};
           const srcEntries = src.entries || [];
-          const f = v => v==null?'':Number(v).toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:false});
+          const f = v => v==null?'':Number(v).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false});
           const fd = dt => (dt||'').slice(0,10).split('-').reverse().join('/');
           const ruoloTxt = j.ruolo_usato==='fornitori' ? 'Fornitore' : 'Cliente';
           const ruoloTag = j.ruolo_richiesto==='(auto)' ? '' : ' <span style="font-size:10px;color:#aaa">[forzato: '+j.ruolo_richiesto+']</span>';
@@ -3522,7 +3522,7 @@ function ozShowFattura(piva, cf, numdoc) {
     return;
   }
 
-  const fmtI = v => { const n = parseFloat(v||0); return n.toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:false}); };
+  const fmtI = v => { const n = parseFloat(v||0); return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false}); };
   const _TD = { TD01:'Fattura', TD02:'Acconto su fattura', TD04:'Nota credito', TD06:'Parcella', TD17:'Integrazione IVA', TD24:'Fattura differita' };
   const _MP = { MP01:'Contanti', MP02:'Assegno', MP05:'Bonifico', MP08:'Carta', MP12:'Riba', MP19:'SEPA Bonifico', MP20:'SEPA Addebito', MP21:'Bonifico+RB' };
   const tipoLabel = _TD[d.tipo] || d.tipo || '';
@@ -4495,9 +4495,9 @@ function _ebitRenderInventory() {
         '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Rim. Iniziali (' + _ebitDateIT(s.previousDate) + ') <span id="ebit-ini-badge">' +
           (isOvIni ? '<span style="display:inline-block;font-size:10px;color:var(--orange);background:rgba(245,158,11,.12);border:1px solid var(--orange);border-radius:10px;padding:1px 8px;margin-left:4px;font-weight:600">✏ MOD.</span>' : '') +
         '</span></div>' +
-        '<input type="number" id="ebit-ini-input" step="1" ' +
-          'value="' + (isOvIni ? Math.round(rimIni) : '') + '" ' +
-          'placeholder="' + Math.round(rimIniXlsx) + '" ' +
+        '<input type="number" id="ebit-ini-input" step="0.01" ' +
+          'value="' + (isOvIni ? Number(rimIni).toFixed(2) : '') + '" ' +
+          'placeholder="' + Number(rimIniXlsx).toFixed(2) + '" ' +
           'oninput="ebitOverrideRimIni(this.value)" ' +
           'style="width:100%;color:var(--text);padding:6px 8px;border-radius:5px;border:1px solid;font-size:14px;font-variant-numeric:tabular-nums;font-weight:600;margin-top:3px;' + iniBg + '">' +
         '<div id="ebit-ini-xlsx-hint" style="font-size:10px;color:var(--muted);margin-top:2px">' +
@@ -4512,9 +4512,9 @@ function _ebitRenderInventory() {
         '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Rim. Finali (' + _ebitDateIT(s.date) + ') <span id="ebit-fin-badge">' +
           (isOv ? '<span style="display:inline-block;font-size:10px;color:var(--orange);background:rgba(245,158,11,.12);border:1px solid var(--orange);border-radius:10px;padding:1px 8px;margin-left:4px;font-weight:600">✏ MOD.</span>' : '') +
         '</span></div>' +
-        '<input type="number" id="ebit-rim-fin-input" step="1" ' +
-          'value="' + (isOv ? Math.round(rimFinEff) : '') + '" ' +
-          'placeholder="' + Math.round(rimFinXlsx) + '" ' +
+        '<input type="number" id="ebit-rim-fin-input" step="0.01" ' +
+          'value="' + (isOv ? Number(rimFinEff).toFixed(2) : '') + '" ' +
+          'placeholder="' + Number(rimFinXlsx).toFixed(2) + '" ' +
           'oninput="ebitOverrideRimFin(this.value)" ' +
           'style="width:100%;color:var(--text);padding:6px 8px;border-radius:5px;border:1px solid;font-size:14px;font-variant-numeric:tabular-nums;font-weight:600;margin-top:3px;' + finBg + '">' +
         '<div id="ebit-fin-xlsx-hint" style="font-size:10px;color:var(--muted);margin-top:2px">' +
@@ -6240,7 +6240,7 @@ function stampaSelezione(tipo) {
   }
   const totale = righe.reduce((s, r) => s + (r.importo || 0), 0);
   const fmtDate = d => d === '—' ? '—' : (d.slice(8,10) + '/' + d.slice(5,7) + '/' + d.slice(0,4));
-  const fmtEur  = n => '€ ' + Math.round(n).toLocaleString('it-IT', {useGrouping:false});
+  const fmtEur  = n => '€ ' + Number(n).toLocaleString('it-IT', {minimumFractionDigits:2, maximumFractionDigits:2, useGrouping:false});
   const oggi    = new Date().toLocaleDateString('it-IT');
   const righeHtml = righe.map(r =>
     `<tr><td>${fmtDate(r.scadenza)}</td><td>${r.fornitore}</td><td class="imp">- ${fmtEur(r.importo)}</td></tr>`
@@ -7230,7 +7230,7 @@ function sdiShowFattura(cf, numdoc, piva) {
     return;
   }
 
-  const fmtI = v => { const n = parseFloat(v||0); return n.toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:false}); };
+  const fmtI = v => { const n = parseFloat(v||0); return n.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false}); };
   const tipoLabel = _TIPO_DOC[d.tipo] || d.tipo;
   const dataFmt = d.data ? d.data.split('-').reverse().join('/') : '—';
   const modPag = _MODALITA_PAG[d.pagamento?.modalita] || d.pagamento?.modalita || '';
@@ -8775,7 +8775,7 @@ function f24RenderModTabs() {
       (m[sec]||[]).forEach(r=>{ deb+=toC(r[di]); cred+=toC(r[di+1]); });
     }
     const saldo=(deb-cred)/100;
-    const sStr = '€ '+saldo.toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:false});
+    const sStr = '€ '+saldo.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false});
     const active = i === f24ModIdx;
     h += `<span style="display:inline-flex;border-radius:6px;overflow:hidden;border:1px solid ${active?'var(--accent)':'var(--border)'}">
       <button onclick="f24SwitchModulo(${i})"
@@ -8835,7 +8835,7 @@ function f24UpdateSaldo() {
   }
   const saldo=(deb-cred)/100;
   const el=document.getElementById('f24-saldo');
-  el.textContent = 'Saldo: € '+saldo.toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:false});
+  el.textContent = 'Saldo: € '+saldo.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false});
   el.style.color = saldo>=0?'var(--green)':'var(--red)';
 }
 
@@ -8894,7 +8894,7 @@ async function f24LoadPdf(file) {
 
     dz.innerHTML = `<div style="color:var(--green);font-weight:600">✓ ${file.name}</div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px">
-        ${nPages} moduli — Totale: € ${totale.toLocaleString('it-IT',{minimumFractionDigits:0,maximumFractionDigits:0,useGrouping:false})}
+        ${nPages} moduli — Totale: € ${totale.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false})}
       </div>`;
   } catch(e) {
     dz.innerHTML = `<div style="color:var(--red)">❌ ${e.message}</div>`;
@@ -9150,7 +9150,7 @@ function f24GeraModulo(idx) {
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums${isWarn?';color:var(--red,#dc2626);font-weight:600':''}">${r.importoCommercialista != null ? fmt(r.importoCommercialista) : '<em style="color:var(--muted)">n/d</em>'}</td>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums${isWarn?';color:var(--red,#dc2626);font-weight:600':''}">${r.diff != null ? (r.diff >= 0 ? '+' : '') + fmt(r.diff) : ''}</td>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right">
-          <input type="number" step="1" value="${Math.round(r.importoFinale)}" data-idx="${idx}"
+          <input type="number" step="0.01" value="${r.importoFinale.toFixed(2)}" data-idx="${idx}"
             style="width:110px;padding:4px 6px;text-align:right;font-variant-numeric:tabular-nums;border:1.5px solid var(--accent);border-radius:3px;background:#fffef0;font-weight:600;font-size:12px">
         </td>
         <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:center">
