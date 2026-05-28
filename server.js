@@ -1155,6 +1155,56 @@ app.post('/api/wise/annulla-saldato', (req, res) => {
 });
 
 
+// ─── SOSPESI / CONTESTAZIONE ─────────────────────────────────────────────────
+app.get('/api/sospesi', (req, res) => {
+  const data = loadData();
+  res.json({ voci: data.pagamenti_sospesi || [] });
+});
+
+app.post('/api/sospesi/add', (req, res) => {
+  const { fattura, motivo } = req.body;
+  if (!fattura) return res.status(400).json({ error: 'fattura required' });
+  const data = loadData();
+  if (!data.pagamenti_sospesi) data.pagamenti_sospesi = [];
+  const voce = {
+    id:         'SOSP_' + Date.now(),
+    id_agyo:    fattura.id_agyo || fattura.id || null,
+    sdi_id:     fattura.id || null,
+    nome:       (fattura.nome || '').trim(),
+    cf:         fattura.cf || '',
+    piva:       fattura.piva || '',
+    numdoc:     fattura.numdoc || '',
+    scadenza:   fattura.scadenza || null,
+    importo:    fattura.importo || 0,
+    motivo:     motivo || 'In sospeso',
+    sospeso_il: new Date().toISOString()
+  };
+  data.pagamenti_sospesi.push(voce);
+  data.pagamenti_sospesi.sort((a, b) => (a.scadenza||'') < (b.scadenza||'') ? -1 : 1);
+  saveData(data);
+  res.json({ ok: true, voce });
+});
+
+app.post('/api/sospesi/update', (req, res) => {
+  const { id, motivo } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const data = loadData();
+  const v = (data.pagamenti_sospesi || []).find(x => x.id === id);
+  if (!v) return res.status(404).json({ error: 'non trovato' });
+  if (motivo !== undefined) v.motivo = motivo;
+  saveData(data);
+  res.json({ ok: true });
+});
+
+app.post('/api/sospesi/delete', (req, res) => {
+  const { id } = req.body;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const data = loadData();
+  data.pagamenti_sospesi = (data.pagamenti_sospesi || []).filter(x => x.id !== id);
+  saveData(data);
+  res.json({ ok: true });
+});
+
 // ─── NASCONDI RIGA DA PAGAMENTI FORNITORI ────────────────────────────────────
 app.post('/api/wise-nascondi', (req, res) => {
   const { rowKey, ripristina } = req.body;
