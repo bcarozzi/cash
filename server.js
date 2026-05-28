@@ -20,6 +20,11 @@ const DATA_FILE = path.join(__dirname, 'cashflow_data.json');
 
 // ─── FORNITORI SPECIALI (override locale) ────────────────────────────────────
 // Nomi case-insensitive (anche parziali). Aggiungere qui quando necessario.
+// Fornitori esclusi da Fatture da Pagare (pagamento automatico, non gestiti manualmente)
+const FORNITORI_ESCLUSI_SDI = [
+  'amazon', 'unipoltech', 'ald automotive', 'iliad'
+];
+
 const FORNITORI_ESTERI_OVERRIDE = [
   'allis electric'
 ];
@@ -1298,6 +1303,12 @@ app.get('/api/fatture-sdi', async (req, res) => {
       // Non bloccare se TAnagrafica fallisce: le scadenze saranno null (impostabili a mano)
       console.warn('TAnagrafica query fallita:', e2.message);
     }
+
+    // Escludi fornitori a pagamento automatico
+    rows = rows.filter(r => {
+      const nomeL = (r.nome || '').toLowerCase();
+      return !FORNITORI_ESCLUSI_SDI.some(p => nomeL.includes(p));
+    });
 
     const fatture = [];
     rows.filter(r => !sdiSaldati[r.idagyo]).forEach(r => {
