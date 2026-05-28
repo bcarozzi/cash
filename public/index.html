@@ -6563,6 +6563,21 @@ async function loadWise() {
   }
 }
 
+async function wiseSposta(rowKey, riga) {
+  if (!confirm(`Spostare "${riga.nome}" (€ ${fmt(riga.importo)}) in Fatture da Pagare?`)) return;
+  try {
+    const r = await fetch('/api/wise-sposta-in-sdi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ riga }) });
+    const j = await r.json();
+    if (!j.ok) { alert('Errore: ' + (j.error || 'sconosciuto')); return; }
+    // Rimuovi dalla cache Wise e aggiorna
+    if (_wiseData) _wiseData.righe = _wiseData.righe.filter(r => (r.id_anagr + '_' + r.data_scad) !== rowKey);
+    renderWise();
+    // Forza ricarica Fatture da Pagare per includere la nuova voce
+    _sdiData = null;
+    if (document.getElementById('tab-fatture-sdi').style.display !== 'none') loadFattureSdi();
+  } catch(e) { alert('Errore: ' + e.message); }
+}
+
 async function ricaricaWise() {
   document.getElementById('we-body').innerHTML = '<div class="loading">Aggiornamento...</div>';
   _wiseData = null;
@@ -6620,6 +6635,7 @@ function renderWise() {
       <th>IBAN</th>
       <th>Riferimenti</th>
       <th style="text-align:right">Importo</th>
+      <th style="width:32px"></th>
     </tr></thead><tbody>`;
 
   filtered.forEach(r => {
@@ -6664,11 +6680,16 @@ function renderWise() {
       </td>
       <td style="font-size:11px;color:var(--dim)">${r.rif || '—'}</td>
       <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">- € ${fmt(r.importo)}</td>
+      <td style="text-align:center;padding:4px">
+        <button onclick="wiseSposta('${rowKey}', ${JSON.stringify(r).replace(/'/g,"\\'")})" title="Sposta in Fatture da Pagare"
+          style="background:transparent;border:1px solid var(--accent);color:var(--accent);cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;line-height:1.4"
+          onmouseover="this.style.background='var(--accent)';this.style.color='#fff'" onmouseout="this.style.background='transparent';this.style.color='var(--accent)'">→ SDI</button>
+      </td>
     </tr>`;
   });
 
   html += `<tr style="border-top:2px solid var(--border);font-weight:700">
-    <td colspan="7">TOTALE FILTRATO</td>
+    <td colspan="8">TOTALE FILTRATO</td>
     <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace">- € ${fmt(filtered.reduce((s,r)=>s+r.importo,0))}</td>
   </tr>`;
   html += '</tbody></table>';

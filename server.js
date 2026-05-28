@@ -955,8 +955,9 @@ app.get('/api/wise-export', async (req, res) => {
       };
     });
 
-    // Escludi pagamenti già saldati nel tracking locale AEC Cash
-    const vociFiltrate = voci.filter(v => !wiseSaldati[String(v.id)]);
+    // Escludi pagamenti già saldati o spostati in Fatture da Pagare
+    const wiseSpostate = data.wise_spostate || {};
+    const vociFiltrate = voci.filter(v => !wiseSaldati[String(v.id)] && !wiseSpostate[v.id_anagr + '_' + v.data_scad]);
 
     // Aggrega per fornitore (stesso IDAnagr) — somma importi stessa scadenza
     const byAnagr = {};
@@ -1337,8 +1338,64 @@ app.get('/api/fatture-sdi', async (req, res) => {
       });
     });
 
+    // ── Aggiungi voci manuali (spostate da Pagamenti Fornitori) ──
+    const sdiManuali = data.sdi_manuali || [];
+    sdiManuali.forEach(m => {
+      if (sdiSaldati[m.id]) return; // già segnata come pagata
+      if (sdiEscluse[m.id]) return; // nascosta manualmente
+      const scadOverride = sdiScadenze[m.id] || null;
+      fatture.push({
+        ...m,
+        scadenza:        scadOverride || m.scadenza || null,
+        scadenza_manual: !!scadOverride,
+        note:            sdiNote[m.id] || m.note || '',
+        controllata:     !!sdiControllate[m.id],
+        iban_manuale:    sdiIbanManuali[m.cf] || sdiIbanManuali[m.piva] || m.iban_manuale || null,
+        manuale:         true
+      });
+    });
+
     res.json({ fatture, totale: fatture.reduce((s, f) => s + f.importo, 0) });
   } catch(e) { res.status(500).json({ error: e.message, stack: e.stack }); }
+});
+
+// ─── WISE → SPOSTA IN FATTURE DA PAGARE ──────────────────────────────────────
+app.post('/api/wise-sposta-in-sdi', (req, res) => {
+  try {
+    const { riga } = req.body; // riga = oggetto Wise row completo dal client
+    if (!riga || !riga.id_anagr) return res.status(400).json({ error: 'riga required' });
+    const chiave = String(riga.id_anagr) + '_' + (riga.data_scad || '');
+    const id = 'MAN_' + chiave;
+    const data = loadData();
+    // Nascondi da Pagamenti Fornitori
+    if (!data.wise_spostate) data.wise_spostate = {};
+    data.wise_spostate[chiave] = new Date().toISOString();
+    // Aggiungi a sdi_manuali (evita duplicati)
+    if (!data.sdi_manuali) data.sdi_manuali = [];
+    if (!data.sdi_manuali.find(m => m.id === id)) {
+      data.sdi_manuali.push({
+        id,
+        id_agyo:         id,
+        nome:            riga.nome || '',
+        cf:              riga.cf || '',
+        piva:            riga.piva || '',
+        numdoc:          riga.rata || riga.rif || '',
+        tipodoc:         '',
+        data_doc:        riga.data_scad || null,
+        data_ricezione:  null,
+        pagamento_desc:  '',
+        scadenza:        riga.data_scad || null,
+        importo:         riga.importo || 0,
+        iban:            riga.iban || null,
+        iban_manuale:    null,
+        note:            '',
+        addebito_diretto: !!riga.addebito_diretto,
+        controllata:     false
+      });
+    }
+    saveData(data);
+    res.json({ ok: true, id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── FATTURE SDI: modifica scadenza manuale ───────────────────────────────────
