@@ -6565,6 +6565,18 @@ async function loadWise() {
   }
 }
 
+async function wiseNascondi(rowKey) {
+  if (!confirm('Nascondere questa riga dalla lista? Puoi ripristinarla dal server se necessario.')) return;
+  try {
+    const r = await fetch('/api/wise-nascondi', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rowKey }) });
+    const j = await r.json();
+    if (!j.ok) { alert('Errore: ' + (j.error||'sconosciuto')); return; }
+    if (_wiseData) _wiseData.righe = _wiseData.righe.filter(x => (x.id_anagr + '_' + x.data_scad) !== rowKey);
+    delete _wiseRowMap[rowKey];
+    renderWise();
+  } catch(e) { alert('Errore: ' + e.message); }
+}
+
 async function wiseSposta(rowKey) {
   const riga = _wiseRowMap[rowKey];
   if (!riga) { alert('Riga non trovata — ricarica la pagina.'); return; }
@@ -6641,6 +6653,7 @@ function renderWise() {
       <th>Riferimenti</th>
       <th style="text-align:right">Importo</th>
       <th style="width:32px"></th>
+      <th style="width:32px"></th>
     </tr></thead><tbody>`;
 
   _wiseRowMap = {}; // reset mappa per questo render
@@ -6692,11 +6705,16 @@ function renderWise() {
           style="background:transparent;border:1px solid var(--accent);color:var(--accent);cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;line-height:1.4"
           onmouseover="this.style.background='var(--accent)';this.style.color='#fff'" onmouseout="this.style.background='transparent';this.style.color='var(--accent)'">→ SDI</button>
       </td>
+      <td style="text-align:center;padding:4px">
+        <button onclick="wiseNascondi('${rowKey}')" title="Nascondi dalla lista"
+          style="background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 4px;border-radius:4px;line-height:1"
+          onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--muted)'">🗑</button>
+      </td>
     </tr>`;
   });
 
   html += `<tr style="border-top:2px solid var(--border);font-weight:700">
-    <td colspan="8">TOTALE FILTRATO</td>
+    <td colspan="9">TOTALE FILTRATO</td>
     <td class="qty-red" style="text-align:right;font-family:'DM Mono',monospace">- € ${fmt(filtered.reduce((s,r)=>s+r.importo,0))}</td>
   </tr>`;
   html += '</tbody></table>';

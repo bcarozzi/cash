@@ -960,9 +960,14 @@ app.get('/api/wise-export', async (req, res) => {
       };
     });
 
-    // Escludi pagamenti già saldati o spostati in Fatture da Pagare
+    // Escludi pagamenti già saldati, spostati in Fatture da Pagare o nascosti manualmente
     const wiseSpostate = data.wise_spostate || {};
-    const vociFiltrate = voci.filter(v => !wiseSaldati[String(v.id)] && !wiseSpostate[v.id_anagr + '_' + v.data_scad]);
+    const wiseNascoste = data.wise_nascoste || {};
+    const vociFiltrate = voci.filter(v =>
+      !wiseSaldati[String(v.id)] &&
+      !wiseSpostate[v.id_anagr + '_' + v.data_scad] &&
+      !wiseNascoste[v.id_anagr + '_' + v.data_scad]
+    );
 
     // Aggrega per fornitore (stesso IDAnagr) — somma importi stessa scadenza
     const byAnagr = {};
@@ -1149,6 +1154,18 @@ app.post('/api/wise/annulla-saldato', (req, res) => {
   res.json({ ok: true, rimossi: ids.length });
 });
 
+
+// ─── NASCONDI RIGA DA PAGAMENTI FORNITORI ────────────────────────────────────
+app.post('/api/wise-nascondi', (req, res) => {
+  const { rowKey, ripristina } = req.body;
+  if (!rowKey) return res.status(400).json({ error: 'rowKey required' });
+  const data = loadData();
+  if (!data.wise_nascoste) data.wise_nascoste = {};
+  if (ripristina) delete data.wise_nascoste[rowKey];
+  else data.wise_nascoste[rowKey] = new Date().toISOString();
+  saveData(data);
+  res.json({ ok: true });
+});
 
 // ─── Helper: calcola rate da PagamentoDefault + DataDoc ──────────────────────
 // Ritorna array di { giorni, scadenza } — una o più rate
