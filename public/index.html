@@ -6131,7 +6131,7 @@ function renderSdi() {
     const xmlInfo = sdiXmlInfo(f.cf, f.numdoc, f.piva);
     const ibanXml = xmlInfo && xmlInfo.iban ? xmlInfo.iban : '';
     const idPaese = xmlInfo ? xmlInfo.idPaese : '';
-    const isEstero = idPaese && idPaese !== 'IT';
+    const isEstero = (idPaese && idPaese !== 'IT') || !!f.estero;
     // Priorità IBAN: override manuale → DB Danea → XML SDI
     const ibanEff = _sdiIbanOverride[f.cf] || f.iban || ibanXml || '';
     const ibanFromXml = !!ibanXml && !_sdiIbanOverride[f.cf] && !f.iban;

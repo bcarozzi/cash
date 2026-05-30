@@ -1512,6 +1512,8 @@ app.post('/api/wise-sposta-in-sdi', (req, res) => {
         iban_manuale:    null,
         note:            riga.rif || '',
         addebito_diretto: !!riga.addebito_diretto,
+        estero:          !!riga.estero,
+        nazione:         riga.nazione || '',
         controllata:     false
       });
     }
