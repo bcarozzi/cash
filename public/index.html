@@ -6118,7 +6118,7 @@ function renderSdi() {
       <th style="padding:4px 6px">N. Fattura</th>
       <th style="padding:4px 6px">Rata</th>
       <th style="white-space:nowrap;padding:4px 6px">Data Doc</th>
-      <th style="padding:4px 6px;width:165px">IBAN</th>
+      <th style="padding:4px 6px;width:190px">IBAN</th>
       <th style="padding:4px 6px;min-width:220px">Annotazioni</th>
       <th style="text-align:right;padding:4px 6px;width:105px">Importo</th>
       <th style="width:32px;padding:4px 6px"></th>
@@ -6173,7 +6173,7 @@ function renderSdi() {
       <td style="font-size:11px;color:var(--muted);padding:1px 6px">${esc(f.numdoc)}</td>
       <td style="font-size:11px;color:var(--cyan);text-align:center;padding:1px 6px">${f.rata_n ? `<span style="background:rgba(8,145,178,.15);border-radius:4px;padding:1px 5px">${f.rata_n}</span>` : ''}</td>
       <td class="mono" style="font-size:12px;white-space:nowrap;padding:1px 6px">${f.data_doc || '—'}</td>
-      <td style="font-size:11px;padding:1px 6px;max-width:165px;overflow:hidden">${ibanCell}</td>
+      <td style="font-size:11px;padding:1px 6px;max-width:190px;overflow:hidden">${ibanCell}</td>
       <td style="padding:1px 6px">
         <input type="text" value="${esc(f.note || '')}" placeholder="annotazioni…"
           style="background:transparent;border:1px solid var(--border);color:var(--text);padding:1px 6px;border-radius:4px;font-size:11px;width:100%;min-width:200px;line-height:1.2"
