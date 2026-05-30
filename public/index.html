@@ -6138,17 +6138,17 @@ function renderSdi() {
     const cfSafe  = esc(f.cf || '');
     const ibanCell = f.addebito_diretto
       ? `<span style="font-size:10px;color:var(--muted);font-weight:600">⚡ Addebito Diretto</span>`
-      : ibanEff
-        ? `<span style="color:${f.iban_manuale || _sdiIbanOverride[f.cf] ? 'var(--cyan)' : ibanFromXml ? 'var(--accent)' : 'var(--green)'};font-family:'DM Mono',monospace;font-size:10px" title="${ibanFromXml ? 'IBAN da fattura XML' : f.iban_manuale || _sdiIbanOverride[f.cf] ? 'IBAN manuale' : 'IBAN da Danea'}">${ibanEff}${f.iban_manuale || _sdiIbanOverride[f.cf] ? '<span style="font-size:9px;color:var(--cyan);margin-left:4px">✎</span>' : ibanFromXml ? '<span style="font-size:9px;color:var(--accent);margin-left:4px">📄</span>' : ''}</span>`
-        : isEstero
-          ? `<span style="font-size:10px;color:var(--muted);font-weight:600">🌍 Estero (${esc(idPaese)}) — IBAN non necessario</span>`
+      : isEstero
+        ? `<span style="font-size:10px;color:var(--muted)">🌍 ${esc(idPaese)||'Estero'}</span>`
+        : ibanEff
+          ? `<span style="color:${f.iban_manuale || _sdiIbanOverride[f.cf] ? 'var(--cyan)' : ibanFromXml ? 'var(--accent)' : 'var(--green)'};font-family:'DM Mono',monospace;font-size:10px" title="${ibanFromXml ? 'IBAN da fattura XML' : f.iban_manuale || _sdiIbanOverride[f.cf] ? 'IBAN manuale' : 'IBAN da Danea'}">${ibanEff}${f.iban_manuale || _sdiIbanOverride[f.cf] ? '<span style="font-size:9px;color:var(--cyan);margin-left:4px">✎</span>' : ibanFromXml ? '<span style="font-size:9px;color:var(--accent);margin-left:4px">📄</span>' : ''}</span>`
           : `<div style="display:flex;gap:4px;align-items:center">
                <input type="text" placeholder="IBAN manuale" id="sdi-iban-${cfSafe}"
                  style="background:var(--bg);border:1px solid var(--orange);color:var(--text);padding:1px 5px;border-radius:4px;font-size:10px;font-family:'DM Mono',monospace;width:170px;line-height:1.2"
                  oninput="setSdiIban('${cfSafe}', this.value)">
                <span style="font-size:10px;color:var(--orange)">⚠</span>
              </div>`;
-    const rowOpacity = f.controllata ? 'opacity:0.45' : '';
+    const rowOpacity = f.controllata ? '' : 'opacity:0.5';
     const flagIcon = f.controllata
       ? `<span style="color:var(--green);font-size:16px;cursor:pointer" title="Controllata — click per annullare">✓</span>`
       : `<span style="color:var(--muted);font-size:14px;cursor:pointer;opacity:0.5" title="Segna come controllata">☐</span>`;
